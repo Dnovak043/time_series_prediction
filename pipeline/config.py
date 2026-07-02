@@ -140,6 +140,15 @@ class TrainingConfig:
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
+    predictors: list = _f(lambda: [],
+                          "Predictors for `train-all` (one model per predictor); "
+                          "empty = train all of distributions.predictors.",
+                          advanced=True)
+    gpus: str = _f("auto", "GPUs for `train-all`: 'auto' = every CUDA device "
+                           "visible to torch, a comma list like '0,2,5', or "
+                           "'none' to force CPU.", advanced=True)
+    max_parallel: int = _f(0, "Max concurrent trainings in `train-all`. "
+                              "0 = auto: one per GPU, else 1 (CPU).")
 
 
 # ---------------------------------------------------------------------------

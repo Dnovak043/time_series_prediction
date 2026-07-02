@@ -106,6 +106,9 @@ Hover any field in the control panel for the same help text.
 | `device` | auto | auto = cuda→cpu; `mps` opt-in (complex-op support is limited) |
 | `continue_from` | — | WGHTS_*.pt to resume |
 | `model_dir` | . | where MOD_*/WGHTS_* are written |
+| `predictors` | [] (= all) | which predictors `train-all` sweeps over |
+| `gpus` | auto | GPUs for `train-all`: all visible / `0,2,5` / `none` |
+| `max_parallel` | 0 (auto) | concurrent trainings; auto = one per GPU, else 1 |
 
 ## 3. Three ways to drive it (same config file)
 
@@ -205,3 +208,46 @@ Note: the torch unfold+bincount histogram from PR #1 is merged and active in
 so the fast dev parity check compares like against like. The pure-Python
 original lives on in the frozen `baseline` tag, which is exactly what
 `verify_against_baseline.py` runs against.
+
+## 7. GPU & parallel execution (any hardware, 8× A100 target)
+
+Design rule: **GPU where the FLOPs are, vectorized CPU where bandwidth is**,
+and every path falls back gracefully so the same code runs on the Mac, a
+1-GPU box, or the 8× A100 machine.
+
+| stage | where it runs | why |
+|---|---|---|
+| zstd decode of `.dbn.zst` | CPU | inherently sequential I/O |
+| featurization (`sigma_W`, trade signs) | CPU, **vectorized** (`fast_ops.py`) | single memory-bound pass after vectorization — a GPU round-trip would cost more than it saves; results are bit-identical to the old per-window Python loops |
+| subsequence/class histograms | GPU if present (`subsequence_torch.py`: cuda→mps→cpu) | integer scatter-add, exact on any device |
+| Kraus training | GPU per model (`device: auto` = cuda→cpu) | complex matmuls; the model is small, so one GPU per *model*, not one model across GPUs |
+| training sweep | **`train-all`**: one predictor per GPU, in parallel | 8 predictors × 8 A100s = the whole sweep in one wall-clock run |
+
+**`train-all`** — the multi-GPU sweep (`pipeline/parallel.py`):
+
+```bash
+python -m pipeline train-all --config run.yaml
+```
+
+- schedules one `python -m pipeline train` subprocess per predictor
+  (`training.predictors`, default: all of `distributions.predictors`),
+  pinning each to a GPU via `CUDA_VISIBLE_DEVICES`;
+- concurrency = number of visible GPUs (8 on the A100 box → all 8 at once;
+  1 GPU → a rolling queue; no GPU → `max_parallel` CPU processes, default 1);
+- every child has its own run dir, log, config copy, and progress.json under
+  the sweep's `outputs/runs/train-all-*/`; the sweep itself reports
+  finished/total, so the control panel's *▶ Train all (multi-GPU)* button and
+  `python -m pipeline status` both track it, and it survives SSH drops when
+  launched from the panel (detached) or under `nohup`/`tmux`.
+
+Verification for this layer (run them yourself):
+
+- `tests/test_fast_ops.py` (seconds, any machine) — exact zero-tolerance
+  equality of the vectorized ops vs the original Python loops, plus edge
+  cases the real data may hit (NaN warmups, flat-mid zero runs).
+- `tests/test_train_all_smoke.py` (~1–2 min, any machine) — real train-all
+  run on synthetic distributions for 3 fake predictors; on the A100 box the
+  report shows children landing on cuda:0/1/2, on the Mac they run on cpu.
+- `tests/verify_against_baseline.py` (Mac, ~45–60 min) — the byte-for-byte
+  ground-truth check; it covers the featurization vectorization end to end
+  since sigma_W feeds the distributions.

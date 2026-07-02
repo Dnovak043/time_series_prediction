@@ -192,7 +192,8 @@ def run_async(config_path: str | Path, run_id: str | None = None,
     poll with read_progress(run_id).
     """
     root = Path(repo_root or REPO_ROOT)
-    run_id = run_id or new_run_id("train" if command == "train" else "run")
+    prefix = command if command.startswith("train") else "run"
+    run_id = run_id or new_run_id(prefix)
     run_dir = root / RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     log = open(run_dir / "run.log", "ab")
