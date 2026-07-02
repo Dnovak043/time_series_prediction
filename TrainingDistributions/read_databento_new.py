@@ -117,14 +117,14 @@ def z_encoding(ts, alpha=0.01, alphastd =0.01):
 
 #-----------------------------------------------------------------------------
 def dbn_to_df(fName, fPath):
-    file=fPath+"\\" + fName
+    file=fPath+"/" + fName
     stored_data = db.DBNStore.from_file(file)
     df = stored_data.to_df()
     return df
 
 
 def zstd_to_df(fName, fPath):
-    file=fPath+"\\" + fName
+    file=fPath+"/" + fName
     # Open the compressed .zst file in binary mode
     with open(file, 'rb') as compressed_file:
         # Create a ZstdDecompressor object
@@ -345,7 +345,7 @@ def getBuckets2(df, col,  minBucket = 10):
 # get processes data for particular coliumn col from an initial frame:
 # skip records where col doesn't change
 # aggregarte inside buckets using specifid aggregation method
-# future - populate/interpolate missing data/buckets
+# future - populate/interpolate missing databuckets
 # returns lists of 
 # ts - processed / aggregated / interpolated time series
 # dts - innovations of ts
@@ -2113,7 +2113,7 @@ def z_encode_ewm(
 test = False
 if test:    
     fName = 'xnas-itch-20250501.mbp-10.dbn.zst'
-    fPath = '/Users/ilk085528/time_series_prediction/data/NVDA_INTC/'
+    fPath = '/Users/ilk085528/time_series_prediction/data/NVDA_INTC'
     
     
     ts, prefixes, suffixes, classes  = get_data(fPath, date, column, frq, dType, pSize, sSize, cFunc, class_column, ts_column = 'ts_event', aggr='mean', tStart = [9+5,30,0], tEnd=[15+5,  30, 0], returns = False)

@@ -490,7 +490,7 @@ features_list =  ['log_mid',"tvi_n" , 'obi_L1', "ofi_L1_n_norm",'ofi_L3_norm_n',
 univariate = False
 bivariate = not univariate
 date = "202504"   # the data is aggregated for 1 month
-symbol= 'AAPL'
+symbol= 'NVDA'
 
 
 if univariate:
@@ -510,7 +510,7 @@ if univariate:
     m = 8               # number of observable symbols  
     n_qubits = 5        # size of system register
     
-    # TD_AAPL_20250303_log_mid_sym_8ss_1sec
+    # TD_NVDA_20250303_log_mid_sym_8ss_1sec
     title = 'TD_'+symbol+'_'+date+'_'+feature + '_'+str(n_symbols)+'ss_'+str(frequency)+freq_units
     infname = fPath+title
     
@@ -535,10 +535,10 @@ if bivariate:
     predicted =  features_list[0]  # 'log_mid_sym'
     predictor =  features_list[1]  # "tvi_n"-1,  'obi_L1'-2, "ofi_L1_n_norm"-3
    
-    # TD_AAPL_20250303_log_mid_sym_8ss_1sec
-    # title = "AAPL"+"_"+"bivariate"+"_"+"log_mid"+"_"+"tvi_n"+"_"+"202504"
+    # TD_NVDA_20250303_log_mid_sym_8ss_1sec
+    # title = "NVDA"+"_"+"bivariate"+"_"+"log_mid"+"_"+"tvi_n"+"_"+"202504"
     
-    # SEQ_DISTR_AAPL_bivariate_log_mid-tvi_n_202504
+    # SEQ_DISTR_NVDA_bivariate_log_mid-tvi_n_202504
     title = "SEQ_DISTR_"+symbol+"_"+variate+"_"+predicted+"_"+predictor+"_"+date
     
     infname = fPath+title

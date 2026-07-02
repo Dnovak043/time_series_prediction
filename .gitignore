@@ -28,4 +28,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+.claude
+
 data/
+outputs/
+SEQ_DISTR_*
+CLS_DISTR_*

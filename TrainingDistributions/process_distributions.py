@@ -194,7 +194,7 @@ def estimate_subsequence_class_probabilities(seq, classes, num_classes, max_subs
 
         for i in range(len(seq) - length + 1):
             subseq = tuple(seq[i:i + length])
-            terminal_class = classes[i + length - 1]
+            terminal_class = classes.iloc[i + length - 1]
             subseq_class_counts[subseq][terminal_class] += 1
 
         length_distributions = []
@@ -1977,7 +1977,7 @@ def filter_length(dist, len_list, min_prob=0.0):
 #------------------------------------------------------------------------------
 # End of distribution_by_date
 #------------------------------------------------------------------------------
-fPath = '/Users/ilk085528/time_series_prediction/data/NVDA_INTC/' 
+fPath = '/Users/ilk085528/time_series_prediction/data/NVDA_INTC' 
 symbol= 'NVDA'
 # "normal" eastern trading time
 tStart = datetime.time(9, 30)
@@ -2024,10 +2024,11 @@ features =  feature_list
 #-----------------------------------------------------------------------------
 # Integration dates
 #-----------------------------------------------------------------------------
-dates = ['20250401', '20250402', '20250403', '20250404','20250407', '20250408', '20250409', '20250410',
-         '20250411', '20250414', '20250415', '20250416','20250417', '20250421', '20250422', '20250423',
-         '20250424', '20250425', '20250428', '20250429','20250430'
-         ]
+# dates = ['20250401', '20250402', '20250403', '20250404','20250407', '20250408', '20250409', '20250410',
+#          '20250411', '20250414', '20250415', '20250416','20250417', '20250421', '20250422', '20250423',
+#          '20250424', '20250425', '20250428', '20250429','20250430'
+#          ]
+dates = ['20250401', '20250402']
 
 predicted = features[0]
 class_calculation = True             # calculate class distribution by sub-sequence 

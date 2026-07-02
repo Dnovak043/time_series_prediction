@@ -330,8 +330,8 @@ if __name__ == "__main__":
         if lag in results['transfer_entropy']:
             print(f"  TE at lag {lag}: {results['transfer_entropy'][lag]:.4f} bits")
     
-    plt.savefig('/mnt/user-data/outputs/symbolic_time_series_analysis.png', dpi=300, bbox_inches='tight')
-    print(f"\nPlot saved to: /mnt/user-data/outputs/symbolic_time_series_analysis.png")
+    plt.savefig('outputs/symbolic_time_series_analysis.png', dpi=300, bbox_inches='tight')
+    print(f"\nPlot saved to: outputs/symbolic_time_series_analysis.png")
     plt.show()
 
 
