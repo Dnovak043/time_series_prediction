@@ -16,7 +16,7 @@ featurize:
   vol_window: 0
   workers: 4
   use_cache: true
-  cache_dir: outputs/feature_cache
+  cache_dir: outputs/april/NVDA/feature_cache
   cache_format: parquet
 encode: {n_symbols: 4, alpha: 0.05, bins_mode: expanding_quantile, fill_mode: bfill,
   min_periods: 2}

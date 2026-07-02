@@ -88,6 +88,8 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     cfg.distributions.predictors = list(PREDICTORS)
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
     cfg.featurize.workers = workers
+    # complete per-symbol separation: own feature cache, outputs, models
+    cfg.featurize.cache_dir = f"outputs/april/{symbol}/feature_cache"
     cfg.training.model_dir = f"outputs/april/{symbol}/models"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
