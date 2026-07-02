@@ -67,6 +67,7 @@ Hover any field in the control panel for the same help text.
 | `frequency` | 100 | bar size: N events / N seconds / N shares |
 | `forward_intervals` | [1,2,3,4] | horizons for `log_mid_return_fwd_k` etc. |
 | `vol_window` | 0 (auto) | trailing window W for `sigma_W`; 0 = 3×frequency |
+| `workers` | 1 | parallel day workers for `run`: 0 = auto (per core), N = exactly N; output byte-identical for any value |
 | `use_cache` / `cache_dir` / `cache_format` | true / outputs/feature_cache / parquet | featurized-day cache |
 
 ### encode — continuous features → discrete symbols
@@ -219,9 +220,14 @@ and every path falls back gracefully so the same code runs on the Mac, a
 |---|---|---|
 | zstd decode of `.dbn.zst` | CPU | inherently sequential I/O |
 | featurization (`sigma_W`, trade signs) | CPU, **vectorized** (`fast_ops.py`) | single memory-bound pass after vectorization — a GPU round-trip would cost more than it saves; results are bit-identical to the old per-window Python loops |
-| subsequence/class histograms | GPU if present (`subsequence_torch.py`: cuda→mps→cpu) | integer scatter-add, exact on any device |
+| subsequence counting — **both** SEQ (`estimate_observed_subsequence_counts_torch`) and CLS (`estimate_subsequence_class_probabilities_torch`) | GPU if present (cuda→mps→cpu) | integer unfold + unique/bincount, exact on any device; replaces the last per-window Python loops |
+| the day loop (`run`) | `featurize.workers` **parallel processes** | days are independent; results are folded in date order so output is byte-identical for any worker count. Workers count on CPU for histograms to avoid N CUDA contexts |
 | Kraus training | GPU per model (`device: auto` = cuda→cpu) | complex matmuls; the model is small, so one GPU per *model*, not one model across GPUs |
 | training sweep | **`train-all`**: one predictor per GPU, in parallel | 8 predictors × 8 A100s = the whole sweep in one wall-clock run |
+
+On the compute box, set `featurize.workers: 0` (auto) in the config — the
+45-day month then featurizes and counts with one process per core. The
+default is 1 (serial) so behavior only changes where you opt in.
 
 **`train-all`** — the multi-GPU sweep (`pipeline/parallel.py`):
 
@@ -248,6 +254,13 @@ Verification for this layer (run them yourself):
 - `tests/test_train_all_smoke.py` (~1–2 min, any machine) — real train-all
   run on synthetic distributions for 3 fake predictors; on the A100 box the
   report shows children landing on cuda:0/1/2, on the Mac they run on cpu.
+- `tests/test_seq_counts_torch.py` (seconds, any machine) — zero-tolerance
+  exact equality of the torch SEQ counter vs the untouched pure-Python
+  original in read_databento_new.py, incl. subsampling rng reproduction,
+  sort modes, and a pickle-bytes-identical case.
+- `tests/test_parallel_run.py` (real data, ~minutes) — serial vs 2-worker
+  parallel run must produce byte-identical SEQ/CLS outputs; this is the
+  test that pins the date-order fold.
 - `tests/verify_against_baseline.py` (Mac, ~45–60 min) — the byte-for-byte
   ground-truth check; it covers the featurization vectorization end to end
   since sigma_W feeds the distributions.

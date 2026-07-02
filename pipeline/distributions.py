@@ -18,9 +18,15 @@ from .config import DistributionConfig, EncodeConfig
 
 
 class DistributionBuilder:
-    def __init__(self, encode_cfg: EncodeConfig, dist_cfg: DistributionConfig):
+    def __init__(self, encode_cfg: EncodeConfig, dist_cfg: DistributionConfig,
+                 device=None):
+        """device: torch device for the counting histograms (None = auto
+        cuda->mps->cpu). The counts are integer-exact on every device; the
+        parallel runner passes "cpu" so N day-workers don't each open a CUDA
+        context for sub-second histogram work."""
         self.encode_cfg = encode_cfg
         self.dist_cfg = dist_cfg
+        self.device = device
 
     # -- encoding ---------------------------------------------------------------
     def encode_bivariate(self, day_df: pd.DataFrame, predictor: str):
@@ -58,11 +64,13 @@ class DistributionBuilder:
     # -- per-day counts -----------------------------------------------------------
     def sequence_counts(self, z_series12: pd.Series):
         """Observed subsequence counts for one day (SEQ distribution input)."""
-        from read_databento_new import estimate_observed_subsequence_counts
+        # torch unfold+unique counting; exact-equality contract vs the
+        # pure-Python original is covered by test_subsequence_torch.py
+        from subsequence_torch import estimate_observed_subsequence_counts_torch
 
         c = self.dist_cfg
         bi_series = list(z_series12)
-        all_subsequences, counts = estimate_observed_subsequence_counts(
+        all_subsequences, counts = estimate_observed_subsequence_counts_torch(
             seq=bi_series,
             max_subsequence_length=c.max_seq_length,
             sample_size=c.sample_size,
@@ -70,6 +78,7 @@ class DistributionBuilder:
             random_state=c.random_state,
             sort="lexicographic",
             include_prob=True,
+            device=self.device,
         )
         return all_subsequences, counts
 
@@ -89,6 +98,7 @@ class DistributionBuilder:
             z_series12, cls_ts,
             num_classes=c.num_classes,
             max_subsequence_length=c.max_seq_length,
+            device=self.device,
         )
         return cl_distributions[1]
 

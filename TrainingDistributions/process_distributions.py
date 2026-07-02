@@ -26,7 +26,10 @@ from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 from collections import defaultdict
 from itertools import product
 
-from subsequence_torch import estimate_subsequence_class_probabilities_torch
+from subsequence_torch import (
+    estimate_observed_subsequence_counts_torch,
+    estimate_subsequence_class_probabilities_torch,
+)
 from fast_ops import rolling_rms, carry_last_nonzero
 
 def add_class_label(
@@ -1855,7 +1858,7 @@ def distribution_by_date(symbol,fPath, dates,resampling,frequency, variate, feat
             #all_subsequences1, counts1 = estimate_subsequence_counts(bi_series, max_seq_length)
             
             
-            all_subsequences, counts = estimate_observed_subsequence_counts(
+            all_subsequences, counts = estimate_observed_subsequence_counts_torch(
                 seq=bi_series,
                 max_subsequence_length=max_seq_length,
                 sample_size=1 , # 0.75,
@@ -1930,7 +1933,7 @@ def get_distribution_by_ts(time_series, variate, predicted, predictor, alpha, n_
             #all_subsequences1, counts1 = estimate_subsequence_counts(bi_series, max_seq_length)
             
             
-            all_subsequences, counts = estimate_observed_subsequence_counts(
+            all_subsequences, counts = estimate_observed_subsequence_counts_torch(
                 seq=bi_series,
                 max_subsequence_length=max_seq_length,
                 sample_size=1 , # 0.75,

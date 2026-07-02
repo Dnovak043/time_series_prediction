@@ -87,11 +87,54 @@ def new_run_id(prefix: str = "run") -> str:
 
 
 # ---------------------------------------------------------------------------
+def _process_day(cfg_dict: dict, date: str, root_str: str,
+                 device) -> dict:
+    """Worker for one day: featurize (via the shared cache) + encode + count
+    for every predictor. Module-level so ProcessPoolExecutor can spawn it.
+    Returns {predictor: {"counts": ..., "cls": ...}}."""
+    import pipeline  # noqa: F401  (sys.path bootstrap in the child)
+    from pipeline.config import RunConfig
+    from pipeline.distributions import DistributionBuilder
+    from pipeline.features import DayFeatureCache
+
+    cfg = RunConfig.from_dict(cfg_dict)
+    root = Path(root_str)
+    cache = DayFeatureCache(cfg.data, cfg.featurize, repo_root=root)
+    builder = DistributionBuilder(cfg.encode, cfg.distributions, device=device)
+    c = cfg.distributions
+
+    day_df = cache.get(date)
+    out: dict[str, dict] = {}
+    for predictor in c.predictors:
+        ts, z12 = builder.encode_bivariate(day_df, predictor)
+        r = {}
+        if c.sequence_calculation:
+            r["counts"] = builder.sequence_counts(z12)[1]
+        if c.class_calculation:
+            r["cls"] = builder.class_counts(ts, z12)
+        out[predictor] = r
+    return out
+
+
+def _resolve_workers(requested: int, n_dates: int) -> int:
+    if requested == 1 or n_dates <= 1:
+        return 1
+    if requested > 0:
+        return min(requested, n_dates)
+    return min(n_dates, os.cpu_count() or 1)
+
+
 def run(cfg: RunConfig, run_id: str | None = None,
         repo_root: Path | None = None) -> dict:
     """
     Build sequence and class distributions for every (date, predictor) in
     the config and pickle the aggregated outputs. Returns {predictor: paths}.
+
+    Days are independent, so they run in featurize.workers parallel worker
+    processes (0 = auto: one per core, capped at the day count; 1 = serial).
+    Results are folded into the monthly aggregate strictly in date order —
+    the exact fold the serial loop does — so outputs are byte-identical
+    regardless of worker count or completion order.
     """
     from integrate_day_distributions import (
         integrate_conditional_class_distributions,
@@ -112,49 +155,75 @@ def run(cfg: RunConfig, run_id: str | None = None,
     predictors = list(c.predictors)
     alphabet = list(range(cfg.alphabet_size))
     max_len = c.max_seq_length
-
-    cache = DayFeatureCache(cfg.data, cfg.featurize, repo_root=root)
-    builder = DistributionBuilder(cfg.encode, c)
+    workers = _resolve_workers(getattr(cfg.featurize, "workers", 1), len(dates))
 
     state = {p: {"L": [], "C": [], "first": None, "last": None,
                  "all": None, "all_cls": None} for p in predictors}
 
-    # one featurize + N_predictor encodes per day
-    steps_total = len(dates) * (1 + len(predictors))
-    steps_done = 0
+    def fold(day_result: dict):
+        """Aggregate one day's counts — identical math/order to the
+        original incremental loop."""
+        for predictor in predictors:
+            st = state[predictor]
+            r = day_result[predictor]
+            if c.sequence_calculation:
+                counts = r["counts"]
+                st["L"].append(counts)
+                if st["first"] is None:
+                    st["first"] = counts
+                st["last"] = counts
+                st["all"] = integrate_distributions(st["L"], max_len, alphabet)
+                st["L"] = [st["all"]]
+            if c.class_calculation:
+                st["C"].append(r["cls"])
+                st["all_cls"] = integrate_conditional_class_distributions(
+                    st["C"], max_len=max_len, n_classes=c.num_classes,
+                    alphabet=alphabet)
+                st["C"] = [st["all_cls"]]
 
     try:
-        for date in dates:
-            progress.update(stage="featurize", pct=100 * steps_done / steps_total,
-                            message=f"featurizing {date}")
-            day_df = cache.get(date)
-            steps_done += 1
-
-            for predictor in predictors:
+        if workers == 1:
+            cache = DayFeatureCache(cfg.data, cfg.featurize, repo_root=root)
+            builder = DistributionBuilder(cfg.encode, c)
+            for i, date in enumerate(dates):
                 progress.update(stage="distributions",
-                                pct=100 * steps_done / steps_total,
-                                message=f"{date}: {predictor} -> {c.predicted}")
-                ts, z12 = builder.encode_bivariate(day_df, predictor)
-                st = state[predictor]
+                                pct=100.0 * i / len(dates),
+                                message=f"{date} ({i + 1}/{len(dates)})")
+                day_df = cache.get(date)
+                day_result = {}
+                for predictor in predictors:
+                    ts, z12 = builder.encode_bivariate(day_df, predictor)
+                    r = {}
+                    if c.sequence_calculation:
+                        r["counts"] = builder.sequence_counts(z12)[1]
+                    if c.class_calculation:
+                        r["cls"] = builder.class_counts(ts, z12)
+                    day_result[predictor] = r
+                fold(day_result)
+        else:
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor, as_completed
 
-                if c.sequence_calculation:
-                    _, counts = builder.sequence_counts(z12)
-                    st["L"].append(counts)
-                    if st["first"] is None:
-                        st["first"] = counts
-                    st["last"] = counts
-                    st["all"] = integrate_distributions(st["L"], max_len, alphabet)
-                    st["L"] = [st["all"]]
-
-                if c.class_calculation:
-                    cl = builder.class_counts(ts, z12)
-                    st["C"].append(cl)
-                    st["all_cls"] = integrate_conditional_class_distributions(
-                        st["C"], max_len=max_len, n_classes=c.num_classes,
-                        alphabet=alphabet)
-                    st["C"] = [st["all_cls"]]
-
-                steps_done += 1
+            progress.update(stage="distributions",
+                            message=f"{len(dates)} days on {workers} workers")
+            cfg_dict = cfg.to_dict()
+            pending: dict[str, dict] = {}
+            next_i = 0
+            with ProcessPoolExecutor(
+                    max_workers=workers,
+                    mp_context=mp.get_context("spawn")) as ex:
+                futures = {ex.submit(_process_day, cfg_dict, d, str(root),
+                                     "cpu"): d for d in dates}
+                for fut in as_completed(futures):
+                    pending[futures[fut]] = fut.result()
+                    # fold strictly in date order for byte-identical output
+                    while next_i < len(dates) and dates[next_i] in pending:
+                        fold(pending.pop(dates[next_i]))
+                        next_i += 1
+                        progress.update(
+                            stage="distributions",
+                            pct=100.0 * next_i / len(dates),
+                            message=f"{next_i}/{len(dates)} days aggregated")
 
         # ---- persist aggregated outputs, same names/format as the original ----
         out_dir = root / c.output_dir
