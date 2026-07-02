@@ -15,12 +15,12 @@ from time_series_analysis import calculate_correlation, calculate_mutual_informa
 # from plot_distributions import plotDistribution
 import datetime
 import pickle
-from Plot_Emp_Model_Dists import plot_distributions_comparison_preserve_order
+from plot_distributions import plot_distributions_comparison_preserve_order
 from integrate_day_distributions import integrate_distributions,  integrate_conditional_class_distributions
 
 from collections import defaultdict
 from typing import Callable, Dict, Iterable, List, Sequence, Tuple
-from plotting import plt_ts, overlay_intraday_series
+# from plotting import plt_ts, overlay_intraday_series
 
  
 from collections import defaultdict
@@ -1977,8 +1977,8 @@ def filter_length(dist, len_list, min_prob=0.0):
 #------------------------------------------------------------------------------
 # End of distribution_by_date
 #------------------------------------------------------------------------------
-fPath = 'C:\EXPIMP\Vanio\Projects\Market Data Preparation\Data' 
-symbol= 'AAPL'
+fPath = '/Users/ilk085528/time_series_prediction/data/NVDA_INTC/' 
+symbol= 'NVDA'
 # "normal" eastern trading time
 tStart = datetime.time(9, 30)
 tEnd   = datetime.time(15, 30)
@@ -1993,22 +1993,22 @@ feature_list = ['log_mid',"tvi_n" , 'obi_L1', "ofi_L1_n_norm",'ofi_L3_norm_n','o
 #------------------------------------------------------------------------------
 # Real Valued Features - univariate - VISUALIZING ONLY
 #------------------------------------------------------------------------------
-individual_real_valued = False
-if individual_real_valued:
-    dates = ['20250401']
-    time_series = get_timeseries_by_date(symbol,fPath, dates[0],resampling,frequency,frw_intervals ,tStart,tEnd )
+# individual_real_valued = False
+# if individual_real_valued:
+#     dates = ['20250401']
+#     time_series = get_timeseries_by_date(symbol,fPath, dates[0],resampling,frequency,frw_intervals ,tStart,tEnd )
     
-    for f in feature_list:
-        plt_ts(time_series[f], shw = True, title=f+'@'+dates[0], label='', color='blue', xlabel= 'x'+str(frequency)+' '+ resampling, ylabel=f)
+#     for f in feature_list:
+#         plt_ts(time_series[f], shw = True, title=f+'@'+dates[0], label='', color='blue', xlabel= 'x'+str(frequency)+' '+ resampling, ylabel=f)
     
-    # ----------------------------------------------------------------------------
-    # Out of sample tme sereis
-    #------------------------------------------------------------------------------
-    dates = ['20250501']                                  
-    time_series2 = get_timeseries_by_date(symbol,fPath, dates[0],resampling,frequency,frw_intervals ,tStart,tEnd )
+#     # ----------------------------------------------------------------------------
+#     # Out of sample tme sereis
+#     #------------------------------------------------------------------------------
+#     dates = ['20250501']                                  
+#     time_series2 = get_timeseries_by_date(symbol,fPath, dates[0],resampling,frequency,frw_intervals ,tStart,tEnd )
     
-    for f in feature_list:
-        plt_ts(time_series2[f], shw = True, title=f+'@'+dates[0], label='', color='red', xlabel= 'x'+str(frequency)+' '+ resampling, ylabel=f)
+#     for f in feature_list:
+#         plt_ts(time_series2[f], shw = True, title=f+'@'+dates[0], label='', color='red', xlabel= 'x'+str(frequency)+' '+ resampling, ylabel=f)
 
 #------------------------------------------------------------------------------
 # Encoder  generative model - Training Distributions

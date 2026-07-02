@@ -482,7 +482,7 @@ def load_model_weights(path, m, n_qubits, learn_rho0=True, device="cpu"):
 #torch.set_num_interop_threads(1)  # usually best on CPU
 
 #-----------------------------------------------------------------------------
-fPath = '..\\Data Preparation\\' 
+fPath = '..\\Data\\NVDA_INTC\\' 
 
 dates = ['20250430','20250501']
 

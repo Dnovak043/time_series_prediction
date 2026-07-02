@@ -2112,8 +2112,8 @@ def z_encode_ewm(
 
 test = False
 if test:    
-    fName = 'xnas-itch-20250520.mbp-10.dbn.zst'
-    fPath = 'C:\EXPIMP\Vanio\Projects\Market Data Preparation\Data'
+    fName = 'xnas-itch-20250501.mbp-10.dbn.zst'
+    fPath = '/Users/ilk085528/time_series_prediction/data/NVDA_INTC/'
     
     
     ts, prefixes, suffixes, classes  = get_data(fPath, date, column, frq, dType, pSize, sSize, cFunc, class_column, ts_column = 'ts_event', aggr='mean', tStart = [9+5,30,0], tEnd=[15+5,  30, 0], returns = False)
