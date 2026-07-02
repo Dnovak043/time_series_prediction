@@ -26,6 +26,8 @@ from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 from collections import defaultdict
 from itertools import product
 
+from subsequence_torch import estimate_subsequence_class_probabilities_torch
+
 def add_class_label(
     time_series: pd.DataFrame,
     class_name: str,
@@ -2060,7 +2062,9 @@ def run_legacy_driver():
     
             if class_calculation:
                 cls_ts = add_class_label(time_series, clsName)
-                cl_distributions=estimate_subsequence_class_probabilities(z_series12, cls_ts, num_classes=num_classes, max_subsequence_length= max_subsequence_length)
+                # torch unfold+bincount histogram; verified identical to the pure-Python
+                # estimate_subsequence_class_probabilities by test_subsequence_torch.py
+                cl_distributions=estimate_subsequence_class_probabilities_torch(z_series12, cls_ts, num_classes=num_classes, max_subsequence_length= max_subsequence_length)
                 C.append(cl_distributions[1])
                 all_cls_distr =integrate_conditional_class_distributions(C,  max_len=max_seq_length,  n_classes=num_classes, alphabet=alphabet) # aggregated class distribution during the month
                            
