@@ -195,6 +195,10 @@ by automation.
   check, not the trust anchor — `verify_against_baseline.py` is.
 - `tests/test_pipeline_units.py` — config/YAML/UI-widget roundtrips, cache
   keying, import-safety of the guarded legacy scripts (seconds).
+- `compare_main_vs_dev.ipynb` — notebook view of the same evidence: hash
+  summary table plus numeric/visual overlays of main's vs dev's
+  distributions, re-openable anytime after a `verify_against_baseline.py`
+  run (it only reads `outputs/baseline_verify/`).
 
 Note: the torch unfold+bincount histogram from PR #1 is merged and active in
 **both** paths — the legacy driver and `DistributionBuilder.class_counts` —
