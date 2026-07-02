@@ -386,6 +386,7 @@ def train(
     loss_kind: LossKind = "nll_seq",        # <-- switch here
     length_mixture: Literal["uniform","geometric","none"] = "uniform",
     alpha: float = 0.95,
+    on_epoch=None,   # optional callback(epoch, total_epochs, avg_loss) for progress reporting
 ):
     d = 2 ** n_qubits
 
@@ -458,6 +459,8 @@ def train(
             n_seen += seq_pad.size(0)
 
         print(f"epoch {ep:3d} | loss {total / max(n_seen,1):.6e}")
+        if on_epoch is not None:
+            on_epoch(ep, epochs, total / max(n_seen, 1))
 
     return model
 #-----------------------------------------------------------------------------
@@ -482,139 +485,146 @@ def load_model_weights(path, m, n_qubits, learn_rho0=True, device="cpu"):
 #torch.set_num_interop_threads(1)  # usually best on CPU
 
 #-----------------------------------------------------------------------------
-fPath = '..\\Data\\NVDA_INTC\\' 
+def main():
+    """Original module-level training script, unchanged. Previously executed
+    on import; now only runs when this file is executed directly."""
+    fPath = '..\\Data\\NVDA_INTC\\' 
 
-dates = ['20250430','20250501']
+    dates = ['20250430','20250501']
 
-features_list =  ['log_mid',"tvi_n" , 'obi_L1', "ofi_L1_n_norm",'ofi_L3_norm_n','ofi_L10_norm_n',"micro_price","ofi_L1_n", 'ofi_L1_norm_n']
-univariate = False
-bivariate = not univariate
-date = "202504"   # the data is aggregated for 1 month
-symbol= 'NVDA'
+    features_list =  ['log_mid',"tvi_n" , 'obi_L1', "ofi_L1_n_norm",'ofi_L3_norm_n','ofi_L10_norm_n',"micro_price","ofi_L1_n", 'ofi_L1_norm_n']
+    univariate = False
+    bivariate = not univariate
+    date = "202504"   # the data is aggregated for 1 month
+    symbol= 'NVDA'
 
 
-if univariate:
-    variate="univariate"
-    feature = features_list[2]
-    n_symbols=8
+    if univariate:
+        variate="univariate"
+        feature = features_list[2]
+        n_symbols=8
     
-    frequency = 1 #sec
-    freq_units = 'sec'
+        frequency = 1 #sec
+        freq_units = 'sec'
     
-    frequency = 100 #events
-    freq_units = 'evn'
+        frequency = 100 #events
+        freq_units = 'evn'
     
-    max_seq_len =       6 #max sequence length to be used for training 
-    min_seq_prob = 0.000000 #threshold for rare events
+        max_seq_len =       6 #max sequence length to be used for training 
+        min_seq_prob = 0.000000 #threshold for rare events
     
-    m = 8               # number of observable symbols  
-    n_qubits = 5        # size of system register
+        m = 8               # number of observable symbols  
+        n_qubits = 5        # size of system register
     
-    # TD_NVDA_20250303_log_mid_sym_8ss_1sec
-    title = 'TD_'+symbol+'_'+date+'_'+feature + '_'+str(n_symbols)+'ss_'+str(frequency)+freq_units
-    infname = fPath+title
+        # TD_NVDA_20250303_log_mid_sym_8ss_1sec
+        title = 'TD_'+symbol+'_'+date+'_'+feature + '_'+str(n_symbols)+'ss_'+str(frequency)+freq_units
+        infname = fPath+title
     
-    distrs_samples =  pickle.load(open( infname, "rb") ) 
-if bivariate:
-    variate="bivariate"
+        distrs_samples =  pickle.load(open( infname, "rb") ) 
+    if bivariate:
+        variate="bivariate"
     
-    n_symbols = 4   #observable symbols per sequence    
-    # resampling 
-    frequency = 1 #sec
-    freq_units = 'sec'
+        n_symbols = 4   #observable symbols per sequence    
+        # resampling 
+        frequency = 1 #sec
+        freq_units = 'sec'
 
-    frequency = 100 #events
-    freq_units = 'evn'
+        frequency = 100 #events
+        freq_units = 'evn'
     
-    max_seq_len =  6          # max sequence length to be used for training 
-    min_seq_prob = 0.000000   # threshold for rare events
+        max_seq_len =  6          # max sequence length to be used for training 
+        min_seq_prob = 0.000000   # threshold for rare events
     
-    m = 16            # number of observable symbols  
-    n_qubits = 3     # size of system register
+        m = 16            # number of observable symbols  
+        n_qubits = 3     # size of system register
    
-    predicted =  features_list[0]  # 'log_mid_sym'
-    predictor =  features_list[1]  # "tvi_n"-1,  'obi_L1'-2, "ofi_L1_n_norm"-3
+        predicted =  features_list[0]  # 'log_mid_sym'
+        predictor =  features_list[1]  # "tvi_n"-1,  'obi_L1'-2, "ofi_L1_n_norm"-3
    
-    # TD_NVDA_20250303_log_mid_sym_8ss_1sec
-    # title = "NVDA"+"_"+"bivariate"+"_"+"log_mid"+"_"+"tvi_n"+"_"+"202504"
+        # TD_NVDA_20250303_log_mid_sym_8ss_1sec
+        # title = "NVDA"+"_"+"bivariate"+"_"+"log_mid"+"_"+"tvi_n"+"_"+"202504"
     
-    # SEQ_DISTR_NVDA_bivariate_log_mid-tvi_n_202504
-    title = "SEQ_DISTR_"+symbol+"_"+variate+"_"+predicted+"_"+predictor+"_"+date
+        # SEQ_DISTR_NVDA_bivariate_log_mid-tvi_n_202504
+        title = "SEQ_DISTR_"+symbol+"_"+variate+"_"+predicted+"_"+predictor+"_"+date
     
-    infname = fPath+title
+        infname = fPath+title
     
-    distrs_samples =  pickle.load(open( infname, "rb") ) 
+        distrs_samples =  pickle.load(open( infname, "rb") ) 
 
 
-sequences_all = distrs_samples[1]
-emp_probs_all = [i[1] for i in distrs_samples[0]] # empirical proabilities
+    sequences_all = distrs_samples[1]
+    emp_probs_all = [i[1] for i in distrs_samples[0]] # empirical proabilities
 
-# filtering/reducing number of examples by length and probability level
-sequences = []
-emp_probs = []
+    # filtering/reducing number of examples by length and probability level
+    sequences = []
+    emp_probs = []
 
-for i in range(len(sequences_all)):
-    if len(sequences_all[i])<=max_seq_len and emp_probs_all[i] > min_seq_prob :
-        sequences.append(sequences_all[i])
-        emp_probs.append(emp_probs_all[i])
+    for i in range(len(sequences_all)):
+        if len(sequences_all[i])<=max_seq_len and emp_probs_all[i] > min_seq_prob :
+            sequences.append(sequences_all[i])
+            emp_probs.append(emp_probs_all[i])
 
-print('Number of examples ', len(sequences))
+    print('Number of examples ', len(sequences))
 
-ds = SeqDataset(sequences, emp_probs)             # data loader
+    ds = SeqDataset(sequences, emp_probs)             # data loader
 
 
-continue_optimization = False                     # if we continue a previous optimization run
-if continue_optimization:
+    continue_optimization = False                     # if we continue a previous optimization run
+    if continue_optimization:
+        save_file_name = 'MOD'+title[8:]+'_'+str(n_qubits)+'q'
+        model_file_name = "WGHTS_"+save_file_name+'.pt'
+
+        modelM, meta = load_model_weights(model_file_name, m, n_qubits, learn_rho0=True, device="cpu")
+        print(meta)
+    else:
+        modelM = None
+
+    model = train(ds.sequences, ds.emp_probs, max_seq_len,
+        m, n_qubits,
+        batch_size= 6*512, #4*512,
+        lr=1e-3,
+        epochs=3000,
+        learn_rho0=True,
+        model=modelM,
+        num_workers=8,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        optimizer_name="adam", loss_kind="nll_seq")
+        #                    , loss_kind="mse_prob")
+
+    # Post optimization
+    # Performance and Visualization of trained model
+
+    p_model = predict_probs(model, sequences, batch_size=2*1024)
+
+    total_loss = 0
+
+    for i in range(len(p_model)):
+        total_loss = total_loss+emp_probs[i]*(emp_probs[i]-p_model[i])**2
+
+    #Kseq, rho0, p = model.path_operator(sequences_all[-1], return_prob=True, device="cpu")
+
+    plotDistributions(emp_probs[:200],p_model[:200], sequences[:200],
+                      title[8:]+' Cost='+str(total_loss), 'Target', 'Model', c1 = 'blue', c2='red' )
+
+    print('Completed:', total_loss)
+    print(title+'_'+str(n_qubits)+'q')
     save_file_name = 'MOD'+title[8:]+'_'+str(n_qubits)+'q'
     model_file_name = "WGHTS_"+save_file_name+'.pt'
 
-    modelM, meta = load_model_weights(model_file_name, m, n_qubits, learn_rho0=True, device="cpu")
-    print(meta)
-else:
-    modelM = None
+    # saving trained model and training use case 
 
-model = train(ds.sequences, ds.emp_probs, max_seq_len,
-    m, n_qubits,
-    batch_size= 6*512, #4*512,
-    lr=1e-3,
-    epochs=3000,
-    learn_rho0=True,
-    model=modelM,
-    num_workers=8,
-    device="cuda" if torch.cuda.is_available() else "cpu",
-    optimizer_name="adam", loss_kind="nll_seq")
-    #                    , loss_kind="mse_prob")
+    pickle.dump( [model, sequences, emp_probs ], open( save_file_name, "wb") )
 
-# Post optimization
-# Performance and Visualization of trained model
-
-p_model = predict_probs(model, sequences, batch_size=2*1024)
-
-total_loss = 0
-
-for i in range(len(p_model)):
-    total_loss = total_loss+emp_probs[i]*(emp_probs[i]-p_model[i])**2
-
-#Kseq, rho0, p = model.path_operator(sequences_all[-1], return_prob=True, device="cpu")
-
-plotDistributions(emp_probs[:200],p_model[:200], sequences[:200],
-                  title[8:]+' Cost='+str(total_loss), 'Target', 'Model', c1 = 'blue', c2='red' )
-
-print('Completed:', total_loss)
-print(title+'_'+str(n_qubits)+'q')
-save_file_name = 'MOD'+title[8:]+'_'+str(n_qubits)+'q'
-model_file_name = "WGHTS_"+save_file_name+'.pt'
-
-# saving trained model and training use case 
-
-pickle.dump( [model, sequences, emp_probs ], open( save_file_name, "wb") )
-
-save_model_weights(
-    model_file_name,
-    model,
-    meta={"m": m, "n_qubits": n_qubits, "d": 2**n_qubits, "learn_rho0": True}
-)            
+    save_model_weights(
+        model_file_name,
+        model,
+        meta={"m": m, "n_qubits": n_qubits, "d": 2**n_qubits, "learn_rho0": True}
+    )            
             
             
             
 
+
+
+if __name__ == "__main__":
+    main()

@@ -30,6 +30,7 @@ def add_class_label(
     time_series: pd.DataFrame,
     class_name: str,
     fill_missing: bool = False,
+    theta: float | None = None,
 ) -> pd.Series:
     """
     Add a {-1,0,1} classification column to time_series and return it.
@@ -54,7 +55,8 @@ def add_class_label(
     thetaDict["ca2"]=0.000007
     thetaDict["ca4"]=0.000007
     
-    theta = thetaDict[class_name]
+    if theta is None:
+        theta = thetaDict[class_name]
     if class_name.startswith("ca"):
         k = int(class_name[2:])
 
@@ -2037,93 +2039,99 @@ num_classes=3
 
 sequence_distribution_calculation = True
 
-for predictor in features[1:]:
-    C = []  #classes distribution list by days
-    L = [] # sequences distributions list by days
-    i = 0
-    for date in dates:
-        print('---------',date,'-------------')
-        time_series = get_timeseries_by_date(symbol,fPath, date, resampling,frequency,frw_intervals ,tStart,tEnd )
-        #--------------------------------------------------------------------------------------------------------------------
-        if sequence_distribution_calculation:
-            all_subsequences, counts, z_series12 = get_distribution_by_ts(time_series, variate, predicted, predictor, alpha, n_symbols,max_seq_length)
-            L.append(counts)
-            if i == 0:
-                firstcounts = counts                                         # distribitions at the first date
-            allcounts = integrate_distributions(L, max_seq_length, alphabet) # aggregated distribution during the month
-            L = [allcounts]
+def run_legacy_driver():
+    """Original module-level batch driver, unchanged. Previously executed on
+    import; now only runs when this file is executed directly."""
+    for predictor in features[1:]:
+        C = []  #classes distribution list by days
+        L = [] # sequences distributions list by days
+        i = 0
+        for date in dates:
+            print('---------',date,'-------------')
+            time_series = get_timeseries_by_date(symbol,fPath, date, resampling,frequency,frw_intervals ,tStart,tEnd )
+            #--------------------------------------------------------------------------------------------------------------------
+            if sequence_distribution_calculation:
+                all_subsequences, counts, z_series12 = get_distribution_by_ts(time_series, variate, predicted, predictor, alpha, n_symbols,max_seq_length)
+                L.append(counts)
+                if i == 0:
+                    firstcounts = counts                                         # distribitions at the first date
+                allcounts = integrate_distributions(L, max_seq_length, alphabet) # aggregated distribution during the month
+                L = [allcounts]
     
-        if class_calculation:
-            cls_ts = add_class_label(time_series, clsName)
-            cl_distributions=estimate_subsequence_class_probabilities(z_series12, cls_ts, num_classes=num_classes, max_subsequence_length= max_subsequence_length)
-            C.append(cl_distributions[1])
-            all_cls_distr =integrate_conditional_class_distributions(C,  max_len=max_seq_length,  n_classes=num_classes, alphabet=alphabet) # aggregated class distribution during the month
+            if class_calculation:
+                cls_ts = add_class_label(time_series, clsName)
+                cl_distributions=estimate_subsequence_class_probabilities(z_series12, cls_ts, num_classes=num_classes, max_subsequence_length= max_subsequence_length)
+                C.append(cl_distributions[1])
+                all_cls_distr =integrate_conditional_class_distributions(C,  max_len=max_seq_length,  n_classes=num_classes, alphabet=alphabet) # aggregated class distribution during the month
                            
-            C=[all_cls_distr]
+                C=[all_cls_distr]
 
 
-        i = i+1                      
+            i = i+1                      
     
-    if sequence_distribution_calculation:
-        # distributions and samples for the month - these will be used for training
-        cntsall=  [[np.array(t[0]).astype(int).tolist() ,t[1],t[2]] for sublist in allcounts for t in sublist]
-        distrsall = [[c[0], c[1]/c[2]] for c in cntsall]
-        samplesall = [s[0] for s in cntsall]
+        if sequence_distribution_calculation:
+            # distributions and samples for the month - these will be used for training
+            cntsall=  [[np.array(t[0]).astype(int).tolist() ,t[1],t[2]] for sublist in allcounts for t in sublist]
+            distrsall = [[c[0], c[1]/c[2]] for c in cntsall]
+            samplesall = [s[0] for s in cntsall]
         
-        # distributions and samples for the last date of the month - for analysis/comparison
-        cntslast=  [[np.array(t[0]).astype(int).tolist() ,t[1],t[2]] for sublist in counts for t in sublist]
-        distrslast = [[c[0], c[1]/c[2]] for c in cntslast]
-        sampleslast = [s[0] for s in cntslast]
+            # distributions and samples for the last date of the month - for analysis/comparison
+            cntslast=  [[np.array(t[0]).astype(int).tolist() ,t[1],t[2]] for sublist in counts for t in sublist]
+            distrslast = [[c[0], c[1]/c[2]] for c in cntslast]
+            sampleslast = [s[0] for s in cntslast]
         
-        # distributions and samples for the first date of the month - for analysis/comparison
-        cntsfirst =  [[np.array(t[0]).astype(int).tolist() ,t[1],t[2]] for sublist in firstcounts for t in sublist]
-        distrsfirst = [[c[0], c[1]/c[2]] for c in cntsfirst]
-        samplesfirst = [s[0] for s in cntsfirst]
+            # distributions and samples for the first date of the month - for analysis/comparison
+            cntsfirst =  [[np.array(t[0]).astype(int).tolist() ,t[1],t[2]] for sublist in firstcounts for t in sublist]
+            distrsfirst = [[c[0], c[1]/c[2]] for c in cntsfirst]
+            samplesfirst = [s[0] for s in cntsfirst]
         
-        plot = False  #plot comaprison of first day, lst day, average monthly distributions
-        distributions = [distrsall, distrsfirst, distrslast]
-        if plot:
-            plots = []
-            seq_lens = [1,2]
-            for d in distributions:
-                plots.append(filter_length(d,seq_lens, 1e-06))
+            plot = False  #plot comaprison of first day, lst day, average monthly distributions
+            distributions = [distrsall, distrsfirst, distrslast]
+            if plot:
+                plots = []
+                seq_lens = [1,2]
+                for d in distributions:
+                    plots.append(filter_length(d,seq_lens, 1e-06))
             
-            colors=[ "blue", "orange",'green']
-            names = [dates[0][:6],dates[0], dates[-1]]  
-            fig, ax, selected, P = plot_distributions_comparison_preserve_order(
-                distributions=plots,
-                names=names,
-                colors=colors,
-                reference_index=0,   # preserve order from first distribution
-                top_n=len(plots[0]), #  100,            # first 100 entries exactly as they appear in input
-                figsize=(18, 6),
-                bar_group_width=0.7, #0.72,
-                title=predictor+ " predicts "+predicted,
-                xlabel="Sequences",
-                ylabel="Probability",
-                rotation=90,
-                edgecolor = "white", # for bars
-                linewidth = 0.2,       # for bars
-                alpha = 0.9
-            )
-            plt.show() 
+                colors=[ "blue", "orange",'green']
+                names = [dates[0][:6],dates[0], dates[-1]]  
+                fig, ax, selected, P = plot_distributions_comparison_preserve_order(
+                    distributions=plots,
+                    names=names,
+                    colors=colors,
+                    reference_index=0,   # preserve order from first distribution
+                    top_n=len(plots[0]), #  100,            # first 100 entries exactly as they appear in input
+                    figsize=(18, 6),
+                    bar_group_width=0.7, #0.72,
+                    title=predictor+ " predicts "+predicted,
+                    xlabel="Sequences",
+                    ylabel="Probability",
+                    rotation=90,
+                    edgecolor = "white", # for bars
+                    linewidth = 0.2,       # for bars
+                    alpha = 0.9
+                )
+                plt.show() 
     
-    save_sequence_distributions = True
-    if sequence_distribution_calculation and save_sequence_distributions:                   # saving monthly aggregated distributions for training
-        outfname = 'SEQ_DISTR_'+symbol+'_' + variate + '_'+predicted+'-'+predictor+'_'+dates[0][:6]    
-        pickle.dump( [distrsall, samplesall ], open( outfname, "wb") )
-        print('Dumped ',outfname)
+        save_sequence_distributions = True
+        if sequence_distribution_calculation and save_sequence_distributions:                   # saving monthly aggregated distributions for training
+            outfname = 'SEQ_DISTR_'+symbol+'_' + variate + '_'+predicted+'-'+predictor+'_'+dates[0][:6]    
+            pickle.dump( [distrsall, samplesall ], open( outfname, "wb") )
+            print('Dumped ',outfname)
 
-    save_class_distributions = True    
-    if class_calculation and save_class_distributions:
-        outfname = 'CLS_DISTR_'+symbol+'_' + variate + '_'+predicted+'-'+predictor+'_'+dates[0][:6] 
-        cls_distr = [item for sublist in all_cls_distr for item in sublist]
-        pickle.dump( cls_distr, open( outfname, "wb") )
-        print('Dumped ',outfname)
+        save_class_distributions = True    
+        if class_calculation and save_class_distributions:
+            outfname = 'CLS_DISTR_'+symbol+'_' + variate + '_'+predicted+'-'+predictor+'_'+dates[0][:6] 
+            cls_distr = [item for sublist in all_cls_distr for item in sublist]
+            pickle.dump( cls_distr, open( outfname, "wb") )
+            print('Dumped ',outfname)
 
 
-sys.exit()
+if __name__ == "__main__":
+    run_legacy_driver()
 
+# Scratch/notes previously dead code below sys.exit(); kept for reference.
+_SCRATCH_NOTES = r'''
 #-----------------------------------------------------------------------------
 # Class calculation
 
@@ -2202,4 +2210,4 @@ time_series["ca4"].value_counts()
 #  [(15,), [736, 1163, 1077], [0.24731182795698925, 0.3907930107526882, 0.36189516129032256], 2976]]
 
 
-    
+    '''
