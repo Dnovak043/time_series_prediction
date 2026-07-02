@@ -75,15 +75,17 @@ class DistributionBuilder:
 
     def class_counts(self, ts: pd.DataFrame, z_series12: pd.Series):
         """Class-conditional counts for one day (CLS distribution input)."""
-        from process_distributions import (
-            add_class_label,
-            estimate_subsequence_class_probabilities,
+        from process_distributions import add_class_label
+        # torch unfold+bincount histogram (PR #1); verified identical to the
+        # pure-Python estimate_subsequence_class_probabilities
+        from subsequence_torch import (
+            estimate_subsequence_class_probabilities_torch,
         )
 
         c = self.dist_cfg
         cls_ts = add_class_label(ts, c.class_name,
                                  theta=c.class_theta or None)
-        cl_distributions = estimate_subsequence_class_probabilities(
+        cl_distributions = estimate_subsequence_class_probabilities_torch(
             z_series12, cls_ts,
             num_classes=c.num_classes,
             max_subsequence_length=c.max_seq_length,

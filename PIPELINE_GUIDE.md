@@ -196,7 +196,8 @@ by automation.
 - `tests/test_pipeline_units.py` — config/YAML/UI-widget roundtrips, cache
   keying, import-safety of the guarded legacy scripts (seconds).
 
-Note: the GPU histogram from PR #1 (torch unfold+bincount) is intentionally
-**not** on this branch — it forked from main per review isolation. Once PR #1
-merges, `DistributionBuilder.class_counts` is the single call site to switch
-over.
+Note: the torch unfold+bincount histogram from PR #1 is merged and active in
+**both** paths — the legacy driver and `DistributionBuilder.class_counts` —
+so the fast dev parity check compares like against like. The pure-Python
+original lives on in the frozen `baseline` tag, which is exactly what
+`verify_against_baseline.py` runs against.
