@@ -79,13 +79,13 @@ def april_dates(data_dir: Path, pattern: str) -> list[str]:
 
 
 def make_config(symbol: str, data_dir: Path, dates: list[str],
-                workers: int) -> Path:
+                workers: int, predictors: list[str] | None = None) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
     cfg.data.dates = dates
     cfg.data.instrument_filter = True
-    cfg.distributions.predictors = list(PREDICTORS)
+    cfg.distributions.predictors = list(predictors or PREDICTORS)
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
     cfg.featurize.workers = workers
     # complete per-symbol separation: own feature cache, outputs, models
