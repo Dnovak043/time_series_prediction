@@ -110,7 +110,9 @@ Hover any field in the control panel for the same help text.
 ## 3. Three ways to drive it (same config file)
 
 **Control panel (JupyterLab or VS Code notebook):** open
-`pipeline_control.ipynb`, run the first cell. Edit fields in the stage tabs →
+`pipeline_control.ipynb`, run the first two cells (build, then display — kept
+separate because VS Code's renderer can drop a large widget tree displayed in
+the cell that creates it). Edit fields in the stage tabs →
 *Save* → *Run distributions* / *Train model* in the **run & monitor** tab.
 Launches are **detached subprocesses**: they survive kernel restarts and SSH
 drops; use *Attach* to re-monitor any run after reconnecting. The **results**
