@@ -129,12 +129,28 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
     for i in range(len(p_model)):
         total_loss = total_loss + emp_probs[i] * (emp_probs[i] - p_model[i]) ** 2
 
-    lk.plotDistributions(emp_probs[:200], p_model[:200], sequences[:200],
-                         title[8:] + " Cost=" + str(total_loss),
-                         "Target", "Model", c1="blue", c2="red")
-    fig_path = out_dir / f"distribution_fit_{predictor}.png"
-    plt.savefig(fig_path, dpi=120, bbox_inches="tight")
-    plt.close("all")
+    # plotDistributions draws the first 200 entries in chunks of 62 and calls
+    # plt.show() per chunk -> 4 charts per predictor: [0-62], [62-124],
+    # [124-186], remainder. Interactively those are 4 windows; here we
+    # intercept show() so each becomes its own PNG (named like
+    # NVDA_202504_log_mid-tvi_n_3q_1.png ... _4.png).
+    fig_base = out_dir / f"{SYMBOL}_{DATE}_{PREDICTED}-{predictor}_{N_QUBITS}q"
+    fig_paths = []
+
+    def _save_instead_of_show(*a, **k):
+        fig_paths.append(f"{fig_base}_{len(fig_paths) + 1}.png")
+        plt.savefig(fig_paths[-1], dpi=120, bbox_inches="tight")
+        plt.close()
+
+    orig_show = plt.show
+    plt.show = _save_instead_of_show
+    try:
+        lk.plotDistributions(emp_probs[:200], p_model[:200], sequences[:200],
+                             title[8:] + " Cost=" + str(total_loss),
+                             "Target", "Model", c1="blue", c2="red")
+    finally:
+        plt.show = orig_show
+        plt.close("all")
 
     print("Completed:", total_loss)
     print(title + "_" + str(N_QUBITS) + "q")
@@ -154,7 +170,7 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
             "seconds_per_epoch": round(train_seconds / max(epochs, 1), 3),
             "final_cost_weighted_mse": total_loss,
             "weights": str(out_dir / model_file_name),
-            "plot": str(fig_path)}
+            "plots": fig_paths}
 
 
 def main():
