@@ -60,6 +60,114 @@ def _as_int64_tensor(values, device: torch.device) -> torch.Tensor:
     return t.to(device)
 
 
+def estimate_observed_subsequence_counts_torch(
+    seq,
+    max_subsequence_length: int,
+    sample_size: float = 1.0,
+    sample_after_length: int = 2,
+    random_state=None,
+    sort: str = "lexicographic",
+    include_prob: bool = True,
+    device: str | torch.device | None = None,
+):
+    """
+    Drop-in replacement for read_databento_new.estimate_observed_subsequence_counts
+    (the SEQ-distribution twin of the class estimator below): counts only the
+    observed subsequences of each length via unfold + torch.unique instead of
+    a Python tuple/dict pass per window.
+
+    Exactness contract (verified by test_subsequence_torch.py): identical
+    return structure — per length, rows [subseq, count, total_possible(, prob)]
+    with the same integer counts, the same lexicographic order (ascending
+    mixed-radix keys ARE lexicographic tuple order), the same subsampling
+    decisions (same rng consumption on identically-ordered items), and
+    bit-identical probs (same int/int division).
+
+    `sort="none"` (first-encounter order) and non-integer/negative symbols
+    fall back to the pure-Python original.
+    """
+    if max_subsequence_length < 1:
+        raise ValueError("max_subsequence_length must be >= 1.")
+    if not (0.0 <= sample_size <= 1.0):
+        raise ValueError("sample_size must be in [0, 1].")
+    if sort not in ("lexicographic", "count_desc", "none"):
+        raise ValueError("sort must be 'lexicographic', 'count_desc', or 'none'.")
+
+    def _fallback():
+        from read_databento_new import estimate_observed_subsequence_counts
+        return estimate_observed_subsequence_counts(
+            seq, max_subsequence_length, sample_size=sample_size,
+            sample_after_length=sample_after_length, random_state=random_state,
+            sort=sort, include_prob=include_prob)
+
+    if sort == "none":     # original preserves first-encounter dict order
+        return _fallback()
+
+    arr = np.asarray(seq)
+    if arr.size and arr.dtype.kind not in "iu":   # non-integer symbols
+        return _fallback()
+
+    dev = pick_device(device)
+    seq_t = _as_int64_tensor(arr, dev)
+    n = seq_t.numel()
+    if n > 0:
+        if int(seq_t.min().item()) < 0:
+            return _fallback()
+        base = int(seq_t.max().item()) + 1
+    else:
+        base = 1
+    if base ** max_subsequence_length >= 2 ** 62:
+        return _fallback()
+
+    rng = np.random.default_rng(random_state)
+    observed_subsequences: list[list[tuple]] = []
+    counts: list[list[list]] = []
+
+    for length in range(1, max_subsequence_length + 1):
+        total_possible = n - length + 1
+        if total_possible <= 0:
+            observed_subsequences.append([])
+            counts.append([])
+            continue
+
+        windows = seq_t.unfold(0, length, 1)
+        weights = base ** torch.arange(
+            length - 1, -1, -1, dtype=torch.int64, device=dev)
+        keys = (windows * weights).sum(dim=1)
+        uniq, cnt = torch.unique(keys, return_counts=True)  # ascending == lex
+        digit_mat = (uniq.unsqueeze(1) // weights) % base
+        items = list(zip((tuple(r) for r in digit_mat.cpu().tolist()),
+                         cnt.cpu().tolist()))
+
+        if sort == "count_desc":
+            items.sort(key=lambda kv: (-kv[1], kv[0]))
+        # "lexicographic": already sorted by construction
+
+        # ---- sample observed support only for longer lengths (identical
+        # rng consumption to the original: same m, k, choice order)
+        if length > sample_after_length and sample_size < 1.0:
+            m = len(items)
+            if sample_size == 0.0:
+                items = []
+            else:
+                k = int(np.round(sample_size * m))
+                k = min(max(k, 1), m)
+                chosen = rng.choice(m, size=k, replace=False)
+                chosen.sort()
+                items = [items[idx] for idx in chosen]
+
+        observed_subsequences.append([subseq for subseq, _ in items])
+        if include_prob:
+            counts.append([[subseq, count, total_possible,
+                            count / total_possible]
+                           for subseq, count in items])
+        else:
+            counts.append([[subseq, count, total_possible]
+                           for subseq, count in items])
+
+    return observed_subsequences, counts
+
+
 def estimate_subsequence_class_probabilities_torch(
     seq,
     classes,

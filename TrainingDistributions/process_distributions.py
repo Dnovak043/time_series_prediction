@@ -26,7 +26,11 @@ from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 from collections import defaultdict
 from itertools import product
 
-from subsequence_torch import estimate_subsequence_class_probabilities_torch
+from subsequence_torch import (
+    estimate_observed_subsequence_counts_torch,
+    estimate_subsequence_class_probabilities_torch,
+)
+from fast_ops import rolling_rms, carry_last_nonzero
 
 def add_class_label(
     time_series: pd.DataFrame,
@@ -445,11 +449,8 @@ Features:
 
     # --- optional trailing event-vol sigma_W on raw events (RMS over last W_events returns) ---
     if W_events is not None and W_events > 0:
-        df2["sigma_W"] = (
-            df2["log_mid_ret"]
-               .rolling(W_events, min_periods=W_events)
-               .apply(lambda x: np.sqrt(np.mean(x * x)), raw=True)
-        )
+        # vectorized rolling RMS (fast_ops) - bit-identical to the original rolling .apply
+        df2["sigma_W"] = rolling_rms(df2["log_mid_ret"], W_events)
     else:
         df2["sigma_W"] = np.nan
 
@@ -764,11 +765,8 @@ def add_event_features_and_resample(
     df2["log_mid_ret"] = df2["log_mid"].diff()
 
     # --- event-volatility sigma_W at every raw event (RMS over last W event-returns) ---
-    df2["sigma_W"] = (
-        df2["log_mid_ret"]
-           .rolling(W, min_periods=W)
-           .apply(lambda x: np.sqrt(np.mean(x * x)), raw=True)
-    )
+    # vectorized rolling RMS (fast_ops) - bit-identical to the original rolling .apply
+    df2["sigma_W"] = rolling_rms(df2["log_mid_ret"], W)
     
 
     # --- block features over last n raw events (aligned to each raw event) ---
@@ -859,13 +857,8 @@ def add_event_features_and_resample(
         s = np.sign(price[unk] - mid[unk]).astype(np.int8)
         tick = np.sign(np.diff(price, prepend=price[0]))[unk].astype(np.int8)
         s = np.where(s != 0, s, tick)
-        # carry last nonzero within the *trade stream* (simple pass)
-        last = 0
-        for i, val in enumerate(s):
-            if val == 0:
-                s[i] = last
-            else:
-                last = val
+        # carry last nonzero within the *trade stream* (vectorized, fast_ops)
+        s = carry_last_nonzero(s)
         sgn[unk] = s
 
     buy_vol_event = np.where(is_trade.values & (sgn > 0), size, 0.0)
@@ -1071,11 +1064,8 @@ def add_event_features_and_resample_volume(
     df2["log_mid_ret"] = df2["log_mid"].diff()
 
     # --- event-volatility sigma_W at every raw event (RMS over last W event-returns) ---
-    df2["sigma_W"] = (
-        df2["log_mid_ret"]
-           .rolling(W, min_periods=W)
-           .apply(lambda x: np.sqrt(np.mean(x * x)), raw=True)
-    )
+    # vectorized rolling RMS (fast_ops) - bit-identical to the original rolling .apply
+    df2["sigma_W"] = rolling_rms(df2["log_mid_ret"], W)
     
 
     # --- block features over last n raw events (aligned to each raw event) ---
@@ -1136,13 +1126,8 @@ def add_event_features_and_resample_volume(
         s = np.sign(price[unk] - mid[unk]).astype(np.int8)
         tick = np.sign(np.diff(price, prepend=price[0]))[unk].astype(np.int8)
         s = np.where(s != 0, s, tick)
-        # carry last nonzero within the *trade stream* (simple pass)
-        last = 0
-        for i, val in enumerate(s):
-            if val == 0:
-                s[i] = last
-            else:
-                last = val
+        # carry last nonzero within the *trade stream* (vectorized, fast_ops)
+        s = carry_last_nonzero(s)
         sgn[unk] = s
 
     buy_vol_event = np.where(is_trade.values & (sgn > 0), size, 0.0)
@@ -1873,7 +1858,7 @@ def distribution_by_date(symbol,fPath, dates,resampling,frequency, variate, feat
             #all_subsequences1, counts1 = estimate_subsequence_counts(bi_series, max_seq_length)
             
             
-            all_subsequences, counts = estimate_observed_subsequence_counts(
+            all_subsequences, counts = estimate_observed_subsequence_counts_torch(
                 seq=bi_series,
                 max_subsequence_length=max_seq_length,
                 sample_size=1 , # 0.75,
@@ -1948,7 +1933,7 @@ def get_distribution_by_ts(time_series, variate, predicted, predictor, alpha, n_
             #all_subsequences1, counts1 = estimate_subsequence_counts(bi_series, max_seq_length)
             
             
-            all_subsequences, counts = estimate_observed_subsequence_counts(
+            all_subsequences, counts = estimate_observed_subsequence_counts_torch(
                 seq=bi_series,
                 max_subsequence_length=max_seq_length,
                 sample_size=1 , # 0.75,

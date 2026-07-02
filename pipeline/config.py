@@ -58,6 +58,11 @@ class FeaturizeConfig:
                                  "log_mid_return_fwd_k / sum_fwd_k target columns.")
     vol_window: int = _f(0, "Trailing event window W for sigma_W volatility. "
                             "0 = automatic (3 x frequency, the original default).")
+    workers: int = _f(1, "Parallel day workers for the distribution run: "
+                         "1 = serial, 0 = auto (one per CPU core, capped at "
+                         "the day count), N = exactly N. Output is "
+                         "byte-identical for any value; each worker holds one "
+                         "day's event data in RAM.")
     use_cache: bool = _f(True, "Reuse a cached featurized day if the parameters "
                                "match, instead of re-decoding the raw file.")
     cache_dir: str = _f("outputs/feature_cache",
@@ -140,6 +145,15 @@ class TrainingConfig:
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
+    predictors: list = _f(lambda: [],
+                          "Predictors for `train-all` (one model per predictor); "
+                          "empty = train all of distributions.predictors.",
+                          advanced=True)
+    gpus: str = _f("auto", "GPUs for `train-all`: 'auto' = every CUDA device "
+                           "visible to torch, a comma list like '0,2,5', or "
+                           "'none' to force CPU.", advanced=True)
+    max_parallel: int = _f(0, "Max concurrent trainings in `train-all`. "
+                              "0 = auto: one per GPU, else 1 (CPU).")
 
 
 # ---------------------------------------------------------------------------

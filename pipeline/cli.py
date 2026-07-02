@@ -7,6 +7,7 @@ CLI: python -m pipeline <command>
   featurize --config <path>   build/refresh the day feature cache only
   run       --config <path>   distribution estimation (SEQ_/CLS_DISTR outputs)
   train     --config <path>   train the configured model on a SEQ_DISTR file
+  train-all --config <path>   one training per predictor, parallel across GPUs
   status    [--run-id <id>]   show progress of the latest (or given) run
   runs                        list known run ids
 """
@@ -39,10 +40,10 @@ def main(argv=None):
     p = sub.add_parser("init-config", help="write a default config file")
     p.add_argument("path", nargs="?", default="run.yaml")
 
-    for name in ("validate", "featurize", "run", "train"):
+    for name in ("validate", "featurize", "run", "train", "train-all"):
         p = sub.add_parser(name)
         p.add_argument("--config", required=True)
-        if name in ("run", "train"):
+        if name in ("run", "train", "train-all"):
             p.add_argument("--run-id", default=None)
 
     p = sub.add_parser("status", help="show run progress")
@@ -84,6 +85,15 @@ def main(argv=None):
         cfg = _load(args)
         result = train_model(cfg, run_id=args.run_id)
         print(json.dumps(result, indent=1))
+        return
+
+    if args.cmd == "train-all":
+        from .parallel import train_all
+        cfg = _load(args)
+        results = train_all(cfg, run_id=args.run_id)
+        print(json.dumps(results, indent=1))
+        if any(r["status"] != "completed" for r in results.values()):
+            sys.exit(1)
         return
 
     if args.cmd == "status":
