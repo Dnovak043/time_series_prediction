@@ -171,13 +171,30 @@ A run's folder `outputs/runs/<run_id>/` always contains the exact
   (process_distributions.py) as before; it's then valid in
   `distributions.predictors`.
 
-## 6. Verification
+## 6. Verification & the frozen baseline
 
+**Trust model.** `main` is frozen at commit `0182a85` as the permanent ground
+truth: it is **locked on GitHub** (read-only until unlocked in repo settings
+→ Branches) and additionally pinned by the annotated git tag **`baseline`**,
+which survives even if branches move. All PRs target the `dev` integration
+branch, never main. Any change, on any branch, must reproduce the baseline's
+outputs byte-for-byte — verified by a script that is run **by the user**, not
+by automation.
+
+- `tests/verify_against_baseline.py` — the ground-truth check. Checks the
+  `baseline` tag out into a temporary worktree, runs the **untouched**
+  original `process_distributions.py` from it as committed (own hardcoded
+  scope: 2 dates × 8 predictors, ~45–60 min, Mac only — the baseline
+  hardcodes the absolute data path), reads that scope back out of the
+  baseline *source* via ast parsing (nothing hand-copied), runs the new
+  pipeline with it (cache off), and byte-compares every SEQ/CLS output in
+  both directions with sha256 printed per file. Exit 0 = identical.
+- `tests/parity_check.py` — fast development check (1 date × 2 predictors,
+  ~8 min): guarded legacy driver vs new runner, plus cold-vs-cache-served.
+  Uses the legacy code *on the current branch*, so it is a convenience
+  check, not the trust anchor — `verify_against_baseline.py` is.
 - `tests/test_pipeline_units.py` — config/YAML/UI-widget roundtrips, cache
-  keying, import-safety of the guarded legacy scripts.
-- `tests/parity_check.py` — runs the **original driver** and the **new
-  runner** on the same real day and asserts the SEQ_DISTR_*/CLS_DISTR_*
-  outputs are identical, and that a cache-served rerun changes nothing.
+  keying, import-safety of the guarded legacy scripts (seconds).
 
 Note: the GPU histogram from PR #1 (torch unfold+bincount) is intentionally
 **not** on this branch — it forked from main per review isolation. Once PR #1
