@@ -1322,7 +1322,7 @@ def restrict_to_rth_et(df, ts_col_utc, start, end):
 
     return df
 
-def generate_timeseries(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath):
+def generate_timeseries(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath, symbol=None):
     # frequency -resampling frequency in events
     
     print('===================================================================')
@@ -1373,6 +1373,10 @@ def generate_timeseries(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath):
     sort_cols=("ts_event", "sequence")  
     take = "last"  
     df = dbn_to_df(fName, fPath)
+    if symbol is not None:
+        # single-instrument filter: the raw file carries every subscribed
+        # symbol (NVDA+INTC interleaved); None = legacy behavior, unfiltered
+        df = df[df["symbol"] == symbol]
     
     # restrict to normal trading time 09:30 - 15:30
     time_stamm_column_utc="ts_event"
@@ -1392,11 +1396,15 @@ def generate_timeseries(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath):
 
 #------------------------------------------------------------------------------
          
-def generate_timeseries_time(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath):
+def generate_timeseries_time(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath, symbol=None):
     group_col = "instrument_id"   # or "symbol"
     sort_cols=("ts_event", "sequence")  
     take = "last"  
     df = dbn_to_df(fName, fPath)
+    if symbol is not None:
+        # single-instrument filter: the raw file carries every subscribed
+        # symbol (NVDA+INTC interleaved); None = legacy behavior, unfiltered
+        df = df[df["symbol"] == symbol]
 
     # restrict to normal trading time 09:30 - 15:30
     time_stamm_column_utc="ts_event"    
@@ -1412,11 +1420,15 @@ def generate_timeseries_time(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPa
     return dfr
 #------------------------------------------------------------------------------
                                
-def generate_timeseries_volume(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath):
+def generate_timeseries_volume(date, tStart,tEnd, frequency, k_fwdL, W, fName, fPath, symbol=None):
     group_col = "instrument_id"   # or "symbol"
     sort_cols=("ts_event", "sequence")  
     take = "last"  
     df = dbn_to_df(fName, fPath)
+    if symbol is not None:
+        # single-instrument filter: the raw file carries every subscribed
+        # symbol (NVDA+INTC interleaved); None = legacy behavior, unfiltered
+        df = df[df["symbol"] == symbol]
 
     # restrict to normal trading time 09:30 - 15:30
     time_stamm_column_utc="ts_event"    

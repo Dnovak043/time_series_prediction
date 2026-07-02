@@ -42,6 +42,14 @@ class DataConfig:
                            advanced=True)
     dates: list = _f(lambda: ["20250401", "20250402"],
                      "Trading days to process, as yyyymmdd strings.")
+    instrument_filter: bool = _f(False,
+                                 "Filter the raw event stream to `symbol` "
+                                 "before featurizing. The raw files carry "
+                                 "every subscribed symbol (NVDA+INTC "
+                                 "interleaved); false = legacy behavior "
+                                 "(unfiltered mixed stream, matches the "
+                                 "frozen baseline), true = required for "
+                                 "per-symbol runs.")
     session_start: str = _f("09:30", "Session start, Eastern time (HH:MM).")
     session_end: str = _f("15:30", "Session end, Eastern time (HH:MM).")
 

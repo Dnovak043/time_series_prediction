@@ -70,25 +70,26 @@ M = 16                         # observable symbols
 N_QUBITS = 3
 
 
-def find_distr_dir(cli_value: str | None) -> Path:
+def find_distr_dir(cli_value: str | None, symbol: str = SYMBOL) -> Path:
     candidates = ([Path(cli_value)] if cli_value else []) + [
+        ROOT / "outputs" / "april" / symbol,
         ROOT / "outputs" / "baseline_verify" / "baseline",
         ROOT / "outputs" / "baseline_verify" / "new",
         ROOT,
     ]
     for d in candidates:
-        if d.is_dir() and list(d.glob("SEQ_DISTR_*_" + DATE)):
+        if d.is_dir() and list(d.glob(f"SEQ_DISTR_{symbol}_*_" + DATE)):
             return d
     raise FileNotFoundError(
-        "No SEQ_DISTR_*_202504 files found. Run "
-        "tests/verify_against_baseline.py first (its outputs are the "
-        "verified inputs), or pass --distr-dir.")
+        f"No SEQ_DISTR_{symbol}_*_{DATE} files found. Run the distribution "
+        "stage for that symbol first, or pass --distr-dir.")
 
 
 def run_one(predictor: str, distr_dir: Path, out_dir: Path,
-            epochs: int, seed: int | None) -> dict:
+            epochs: int, seed: int | None,
+            symbol: str = SYMBOL, n_qubits: int = N_QUBITS) -> dict:
     # ---- from here on: main()'s bivariate branch, step for step ----
-    title = "SEQ_DISTR_" + SYMBOL + "_" + VARIATE + "_" + PREDICTED \
+    title = "SEQ_DISTR_" + symbol + "_" + VARIATE + "_" + PREDICTED \
             + "-" + predictor + "_" + DATE   # dash: the name the files really have
     infname = distr_dir / title
     print(f"\n=== {predictor}: training on {infname} ===")
@@ -112,7 +113,7 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
     t0 = time.time()
     model = lk.train(
         sequences, emp_probs, MAX_SEQ_LEN,
-        M, N_QUBITS,
+        M, n_qubits,
         batch_size=6 * 512,
         lr=1e-3,
         epochs=epochs,
@@ -134,7 +135,7 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
     # [124-186], remainder. Interactively those are 4 windows; here we
     # intercept show() so each becomes its own PNG (named like
     # NVDA_202504_log_mid-tvi_n_3q_1.png ... _4.png).
-    fig_base = out_dir / f"{SYMBOL}_{DATE}_{PREDICTED}-{predictor}_{N_QUBITS}q"
+    fig_base = out_dir / f"{symbol}_{DATE}_{PREDICTED}-{predictor}_{n_qubits}q"
     fig_paths = []
 
     def _save_instead_of_show(*a, **k):
@@ -153,22 +154,23 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
         plt.close("all")
 
     print("Completed:", total_loss)
-    print(title + "_" + str(N_QUBITS) + "q")
-    save_file_name = "MOD" + title[8:] + "_" + str(N_QUBITS) + "q"  # original quirk kept
+    print(title + "_" + str(n_qubits) + "q")
+    save_file_name = "MOD" + title[8:] + "_" + str(n_qubits) + "q"  # original quirk kept
     model_file_name = "WGHTS_" + save_file_name + ".pt"
 
     with open(out_dir / save_file_name, "wb") as fh:
         pickle.dump([model, sequences, emp_probs], fh)
     lk.save_model_weights(
         out_dir / model_file_name, model,
-        meta={"m": M, "n_qubits": N_QUBITS, "d": 2 ** N_QUBITS,
-              "learn_rho0": True, "predictor": predictor,
+        meta={"m": M, "n_qubits": n_qubits, "d": 2 ** n_qubits,
+              "learn_rho0": True, "predictor": predictor, "symbol": symbol,
               "epochs": epochs, "seed": seed})
 
-    return {"predictor": predictor, "examples": len(sequences),
+    return {"symbol": symbol, "predictor": predictor, "examples": len(sequences),
             "epochs": epochs, "train_seconds": round(train_seconds, 1),
             "seconds_per_epoch": round(train_seconds / max(epochs, 1), 3),
             "final_cost_weighted_mse": total_loss,
+            "model_pickle": str(out_dir / save_file_name),
             "weights": str(out_dir / model_file_name),
             "plots": fig_paths}
 
@@ -184,21 +186,26 @@ def main():
                          "like the original)")
     ap.add_argument("--distr-dir", default=None,
                     help="directory with SEQ_DISTR_*_202504 files")
+    ap.add_argument("--symbol", default=SYMBOL,
+                    help="ticker whose SEQ_DISTR files to train on (default NVDA)")
+    ap.add_argument("--n-qubits", type=int, default=N_QUBITS,
+                    help="system register size (default 3, the committed value)")
     args = ap.parse_args()
 
-    distr_dir = find_distr_dir(args.distr_dir)
+    distr_dir = find_distr_dir(args.distr_dir, args.symbol)
     out_dir = ROOT / "outputs" / "kraus_baseline"
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"inputs:  {distr_dir}\noutputs: {out_dir}")
 
-    results = [run_one(p, distr_dir, out_dir, args.epochs, args.seed)
+    results = [run_one(p, distr_dir, out_dir, args.epochs, args.seed,
+                       symbol=args.symbol, n_qubits=args.n_qubits)
                for p in args.predictors]
 
     summary_path = out_dir / "summary.json"
     summary_path.write_text(json.dumps(results, indent=1))
     print(f"\n=== baseline summary ({summary_path}) ===")
     for r in results:
-        print(f"  {r['predictor']:16s} examples={r['examples']:7d} "
+        print(f"  {r['symbol']:5s} {r['predictor']:16s} examples={r['examples']:7d} "
               f"{r['train_seconds']:8.1f}s ({r['seconds_per_epoch']:.3f}s/epoch) "
               f"cost={r['final_cost_weighted_mse']:.3e}")
 

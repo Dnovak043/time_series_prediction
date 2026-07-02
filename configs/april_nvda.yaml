@@ -1,0 +1,55 @@
+data:
+  symbol: NVDA
+  data_path: /Users/ilk085528/time_series_prediction/data/NVDA_INTC
+  file_pattern: xnas-itch-{date}.mbp-10.dbn.zst
+  dates: ['20250401', '20250402', '20250403', '20250404', '20250407', '20250408',
+    '20250409', '20250410', '20250411', '20250414', '20250415', '20250416', '20250417',
+    '20250421', '20250422', '20250423', '20250424', '20250425', '20250428', '20250429',
+    '20250430']
+  instrument_filter: true
+  session_start: 09:30
+  session_end: '15:30'
+featurize:
+  resampling: events
+  frequency: 100
+  forward_intervals: [1, 2, 3, 4]
+  vol_window: 0
+  workers: 4
+  use_cache: true
+  cache_dir: outputs/feature_cache
+  cache_format: parquet
+encode: {n_symbols: 4, alpha: 0.05, bins_mode: expanding_quantile, fill_mode: bfill,
+  min_periods: 2}
+distributions:
+  predicted: log_mid
+  predictors: [tvi_n, obi_L1, ofi_L1_n_norm]
+  max_seq_length: 6
+  sequence_calculation: true
+  class_calculation: true
+  class_name: c1
+  class_theta: 0.0
+  num_classes: 3
+  sample_size: 1.0
+  sample_after_length: 30
+  random_state: 42
+  output_dir: outputs/april/NVDA
+training:
+  model: kraus
+  predictor: tvi_n
+  seq_distr_file: ''
+  n_qubits: 3
+  epochs: 3000
+  batch_size: 3072
+  lr: 0.001
+  optimizer: adam
+  loss_kind: nll_seq
+  length_mixture: uniform
+  learn_rho0: true
+  max_seq_len: 6
+  min_seq_prob: 0.0
+  device: auto
+  continue_from: ''
+  model_dir: outputs/april/NVDA/models
+  predictors: []
+  gpus: auto
+  max_parallel: 0

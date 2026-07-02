@@ -52,6 +52,10 @@ class DayFeatureCache:
             "forward_intervals": list(f.forward_intervals),
             "vol_window": f.vol_window or 3 * f.frequency,
         }
+        # only key on the filter when it is on, so pre-existing cache entries
+        # (built before the flag existed) stay valid for the legacy mode
+        if getattr(d, "instrument_filter", False):
+            payload["instrument_filter"] = True
         blob = json.dumps(payload, sort_keys=True)
         return hashlib.md5(blob.encode()).hexdigest()[:10]
 
@@ -110,5 +114,6 @@ class DayFeatureCache:
         if f.resampling not in generators:
             raise ValueError(f"Unknown resampling mode: {f.resampling!r}")
         return generators[f.resampling](
-            date, t_start, t_end, f.frequency, k_fwd, w, fname, self.data_path
+            date, t_start, t_end, f.frequency, k_fwd, w, fname, self.data_path,
+            symbol=d.symbol if getattr(d, "instrument_filter", False) else None,
         )

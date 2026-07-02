@@ -58,6 +58,7 @@ Hover any field in the control panel for the same help text.
 | `data_path` | data/NVDA_INTC | directory with raw `.dbn.zst` files |
 | `file_pattern` | xnas-itch-{date}.mbp-10.dbn.zst | raw file name per day |
 | `dates` | [20250401, 20250402] | trading days (yyyymmdd) |
+| `instrument_filter` | false | **true = filter events to `symbol` before featurizing.** The raw files carry NVDA+INTC interleaved; false reproduces the legacy (mixed-stream) behavior and the frozen baseline. Set true for per-symbol runs (see `scripts/run_april.py`). |
 | `session_start` / `session_end` | 09:30 / 15:30 | Eastern-time RTH window |
 
 ### featurize — event stream → resampled LOB feature bars
