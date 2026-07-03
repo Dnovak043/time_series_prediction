@@ -1,0 +1,23 @@
+# Runtime dependencies for the full pipeline (distributions + training + UI).
+# Derived from an AST scan of every module on the experiment's import chain.
+#     python3 -m venv .env && source .env/bin/activate
+#     pip install -r requirements.txt
+#
+# torch note: on Linux, plain `pip install torch` gives the CUDA build.
+#             On Intel macOS, torch is capped at 2.2.2 (last x86_64 wheel).
+
+databento          # raw .dbn/.dbn.zst decoding (pulls in databento_dbn)
+zstandard
+numpy
+pandas
+pyarrow            # parquet feature cache
+scipy              # read_databento_new top-level import
+scikit-learn       # read_databento_new top-level import
+statsmodels        # plot_distributions
+arch               # GARCH fits — legacy diagnostics, but imported at module load
+pyinform           # transfer entropy — legacy diagnostics, but imported at module load
+matplotlib
+torch
+pyyaml
+ipywidgets         # control panel (pipeline_control.ipynb)
+ipykernel          # registers the venv as a Jupyter kernel
