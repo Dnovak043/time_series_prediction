@@ -69,21 +69,37 @@ def find_data_dir() -> Path:
     raise FileNotFoundError(f"raw data not found at {local} or {candidate}")
 
 
+def detect_pattern(data_dir: Path) -> str:
+    """Raw files may be zstd-compressed or plain DBN (both read identically
+    by databento); use whichever variant this machine's download has."""
+    for pattern in ("xnas-itch-{date}.mbp-10.dbn.zst",
+                    "xnas-itch-{date}.mbp-10.dbn"):
+        prefix, suffix = pattern.split("{date}")
+        if any(data_dir.glob(prefix + MONTH + "*" + suffix)):
+            return pattern
+    raise FileNotFoundError(f"no {MONTH} .dbn/.dbn.zst files in {data_dir}")
+
+
 def april_dates(data_dir: Path, pattern: str) -> list[str]:
     prefix, suffix = pattern.split("{date}")
+    # exact-suffix check so *.dbn does not also swallow *.dbn.zst
     dates = sorted(p.name[len(prefix):-len(suffix)]
-                   for p in data_dir.glob(prefix + MONTH + "*" + suffix))
+                   for p in data_dir.glob(prefix + MONTH + "*" + suffix)
+                   if p.name.endswith(suffix))
     if not dates:
         raise FileNotFoundError(f"no {MONTH} files in {data_dir}")
     return dates
 
 
 def make_config(symbol: str, data_dir: Path, dates: list[str],
-                workers: int, predictors: list[str] | None = None) -> Path:
+                workers: int, predictors: list[str] | None = None,
+                file_pattern: str | None = None) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
     cfg.data.dates = dates
+    if file_pattern:
+        cfg.data.file_pattern = file_pattern
     cfg.data.instrument_filter = True
     cfg.distributions.predictors = list(predictors or PREDICTORS)
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
@@ -113,11 +129,13 @@ def main():
     args = ap.parse_args()
 
     data_dir = find_data_dir()
-    dates = april_dates(data_dir, "xnas-itch-{date}.mbp-10.dbn.zst")
-    print(f"data: {data_dir}\nApril days: {len(dates)} "
+    pattern = detect_pattern(data_dir)
+    dates = april_dates(data_dir, pattern)
+    print(f"data: {data_dir}  (pattern: {pattern})\nApril days: {len(dates)} "
           f"({dates[0]}..{dates[-1]})")
 
-    configs = {s: make_config(s, data_dir, dates, args.workers)
+    configs = {s: make_config(s, data_dir, dates, args.workers,
+                              args.predictors, pattern)
                for s in args.symbols}
 
     # ---- stage 2: distributions -------------------------------------------------
