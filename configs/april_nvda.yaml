@@ -22,17 +22,28 @@ encode: {n_symbols: 4, alpha: 0.05, bins_mode: expanding_quantile, fill_mode: bf
   min_periods: 2}
 distributions:
   predicted: log_mid
-  predictors: [tvi_n, obi_L1, ofi_L1_n_norm]
+  predictors: [tvi_n, obi_L1, ofi_L1_n, ofi_L1_n_norm, ofi_L1_norm_n, ofi_L3_norm_n,
+    ofi_L10_norm_n, micro_price, vpin, sigma_W]
   max_seq_length: 6
   sequence_calculation: true
   class_calculation: true
   class_name: c1
+  class_names: [c1, c2, c4, ca2, ca4]
+  class_values: [-1, 0, 1]
   class_theta: 0.0
   num_classes: 3
   sample_size: 1.0
   sample_after_length: 30
   random_state: 42
   output_dir: outputs/april/NVDA
+ensemble:
+  seq_lengths: [1, 2, 3, 4, 5]
+  class_names: [c1, c2, c4, ca2, ca4]
+  class_values: [-1, 0, 1]
+  predictors: [log_mid, tvi_n, obi_L1, ofi_L1_n, ofi_L1_n_norm, ofi_L1_norm_n, ofi_L3_norm_n,
+    ofi_L10_norm_n, micro_price, vpin, sigma_W]
+  smoothing: 0.0
+  output_dir: outputs/april/NVDA/ensemble
 training:
   model: kraus
   predictor: tvi_n

@@ -52,7 +52,12 @@ import pipeline  # noqa: E402,F401
 from pipeline.config import RunConfig  # noqa: E402
 
 SYMBOLS = ["NVDA", "INTC"]
-PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # features_list[1..3]
+PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # TRAINING (boss's 3 models/symbol)
+# distribution stage: colleague's full spec (his email / cls_reference.py)
+DIST_PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n", "ofi_L1_n_norm",
+                   "ofi_L1_norm_n", "ofi_L3_norm_n", "ofi_L10_norm_n",
+                   "micro_price", "vpin", "sigma_W"]
+CLS_NAMES = ["c1", "c2", "c4", "ca2", "ca4"]        # one CLS file per class
 MONTH = "202504"
 
 
@@ -101,7 +106,12 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     if file_pattern:
         cfg.data.file_pattern = file_pattern
     cfg.data.instrument_filter = True
-    cfg.distributions.predictors = list(predictors or PREDICTORS)
+    # colleague's new process_distributions spec: 10 predictors (superset of
+    # the 3 training predictors -> their SEQ files come out of the same run),
+    # v2 multi-class CLS sweep with (-1,0,1) column order
+    cfg.distributions.predictors = list(predictors or DIST_PREDICTORS)
+    cfg.distributions.class_names = list(CLS_NAMES)
+    cfg.distributions.class_values = [-1, 0, 1]
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
     cfg.featurize.workers = workers
     # complete per-symbol separation: own feature cache, outputs, models
@@ -146,15 +156,16 @@ def main():
           f"({dates[0]}..{dates[-1]})")
 
     configs = {s: make_config(s, data_dir, dates, args.workers,
-                              args.predictors, pattern)
+                              None, pattern)   # None -> DIST_PREDICTORS
                for s in args.symbols}
 
     # ---- stage 2: distributions -------------------------------------------------
     if not args.skip_distributions:
         from pipeline.runner import run
         for symbol, cfg_path in configs.items():
-            print(f"\n=== distributions: {symbol} "
-                  f"({len(dates)} days x {len(args.predictors)} predictors) ===")
+            print(f"\n=== distributions: {symbol} ({len(dates)} days x "
+                  f"{len(DIST_PREDICTORS)} predictors x "
+                  f"{len(CLS_NAMES)} classes) ===")
             t0 = time.time()
             run(RunConfig.load(cfg_path), run_id=f"april-{symbol}")
             print(f"{symbol} distributions done in {time.time()-t0:.0f}s "
