@@ -6,6 +6,7 @@ CLI: python -m pipeline <command>
   validate  --config <path>   check a config without running anything
   featurize --config <path>   build/refresh the day feature cache only
   run       --config <path>   distribution estimation (SEQ_/CLS_DISTR outputs)
+  ensemble  --config <path>   fixed-length ensemble tables (ENS_TD_* outputs)
   train     --config <path>   train the configured model on a SEQ_DISTR file
   train-all --config <path>   one training per predictor, parallel across GPUs
   status    [--run-id <id>]   show progress of the latest (or given) run
@@ -40,10 +41,11 @@ def main(argv=None):
     p = sub.add_parser("init-config", help="write a default config file")
     p.add_argument("path", nargs="?", default="run.yaml")
 
-    for name in ("validate", "featurize", "run", "train", "train-all"):
+    for name in ("validate", "featurize", "run", "ensemble", "train",
+                 "train-all"):
         p = sub.add_parser(name)
         p.add_argument("--config", required=True)
-        if name in ("run", "train", "train-all"):
+        if name in ("run", "ensemble", "train", "train-all"):
             p.add_argument("--run-id", default=None)
 
     p = sub.add_parser("status", help="show run progress")
@@ -78,6 +80,14 @@ def main(argv=None):
         outputs = run(cfg, run_id=args.run_id)
         for predictor, paths in outputs.items():
             print(predictor, "->", paths)
+        return
+
+    if args.cmd == "ensemble":
+        from .ensemble import run_ensemble
+        cfg = _load(args)
+        outputs = run_ensemble(cfg, run_id=args.run_id)
+        for combo, path in outputs.items():
+            print(combo, "->", path)
         return
 
     if args.cmd == "train":

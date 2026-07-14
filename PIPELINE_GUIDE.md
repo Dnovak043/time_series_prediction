@@ -93,6 +93,23 @@ Hover any field in the control panel for the same help text.
 | `sample_size` / `sample_after_length` / `random_state` | 1.0 / 30 / 42 | optional support subsampling for long n-grams |
 | `output_dir` | . | where SEQ_DISTR_*/CLS_DISTR_* land (repo root = legacy behavior) |
 
+### ensemble — fixed-length multi-channel training tables (ENS_TD_*)
+| field | default | meaning |
+|---|---|---|
+| `seq_lengths` | [1..5] | fixed window lengths; one output set per length |
+| `class_names` | [c1,c2,c4,ca2,ca4] | class definitions swept; one output set per (length, class) |
+| `class_values` | [-1,0,1] | class column order of the output distributions |
+| `predictors` | 11 channels (incl. `log_mid` itself, `vpin`, `sigma_W`) | one bivariate encoding per channel, timestamp-aligned by inner join |
+| `smoothing` | 0.0 | Dirichlet pseudocount for target class distributions |
+| `output_dir` | outputs/ensemble | where ENS_TD_* pickles land |
+
+Counting math is imported verbatim from `TrainingDistributions/`
+`ensemble_reference.py` (the colleague's ensemble_training_data.py, vendored
+with an import guard); the stage replaces only the plumbing — cached
+featurize + encode-once instead of ~6,300 redundant decodes per month.
+Verification: `tests/verify_ensemble_reference.py` (run it yourself)
+byte-compares the stage against the colleague's own functions run his way.
+
 ### training — SEQ_DISTR_* → trained model
 | field | default | meaning |
 |---|---|---|
