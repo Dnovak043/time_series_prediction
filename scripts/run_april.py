@@ -52,6 +52,8 @@ import pipeline  # noqa: E402,F401
 from pipeline.config import RunConfig  # noqa: E402
 
 SYMBOLS = ["NVDA", "INTC"]
+PREDICTED = "log_mid"   # features[0] in BOTH colleague files: every output
+                        # is a bivariate (log_mid, predictor) pair
 PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # TRAINING (boss's 3 models/symbol)
 # distribution stage: colleague's full spec (his email / cls_reference.py)
 DIST_PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n", "ofi_L1_n_norm",
@@ -109,6 +111,7 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # colleague's new process_distributions spec: 10 predictors (superset of
     # the 3 training predictors -> their SEQ files come out of the same run),
     # v2 multi-class CLS sweep with (-1,0,1) column order
+    cfg.distributions.predicted = PREDICTED
     cfg.distributions.predictors = list(predictors or DIST_PREDICTORS)
     cfg.distributions.class_names = list(CLS_NAMES)
     cfg.distributions.class_values = [-1, 0, 1]
