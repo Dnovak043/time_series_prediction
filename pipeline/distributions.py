@@ -82,8 +82,15 @@ class DistributionBuilder:
         )
         return all_subsequences, counts
 
-    def class_counts(self, ts: pd.DataFrame, z_series12: pd.Series):
-        """Class-conditional counts for one day (CLS distribution input)."""
+    def class_counts(self, ts: pd.DataFrame, z_series12: pd.Series,
+                     cls_name: str | None = None):
+        """Class-conditional counts for one day (CLS distribution input).
+
+        cls_name=None: legacy mode — dist_cfg.class_name, old column order
+        [P(0),P(+1),P(-1)] (frozen-baseline convention).
+        cls_name given: v2 mode (cls_reference.py) — that class, columns
+        ordered by dist_cfg.class_values.
+        """
         from process_distributions import add_class_label
         # torch unfold+bincount histogram (PR #1); verified identical to the
         # pure-Python estimate_subsequence_class_probabilities
@@ -92,13 +99,15 @@ class DistributionBuilder:
         )
 
         c = self.dist_cfg
-        cls_ts = add_class_label(ts, c.class_name,
-                                 theta=c.class_theta or None)
+        v2 = cls_name is not None
+        cls_ts = add_class_label(ts, cls_name if v2 else c.class_name,
+                                 theta=None if v2 else (c.class_theta or None))
         cl_distributions = estimate_subsequence_class_probabilities_torch(
             z_series12, cls_ts,
             num_classes=c.num_classes,
             max_subsequence_length=c.max_seq_length,
             device=self.device,
+            class_values=tuple(c.class_values) if v2 else None,
         )
         return cl_distributions[1]
 

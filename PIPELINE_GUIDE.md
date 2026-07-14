@@ -88,6 +88,8 @@ Hover any field in the control panel for the same help text.
 | `max_seq_length` | 6 | max n-gram length |
 | `sequence_calculation` / `class_calculation` | true / true | which outputs to compute |
 | `class_name` | c1 | forward-move class: `c{k}` return-sign, `ca{k}` fwd-vs-bwd sum |
+| `class_names` | [] (legacy) | **v2 multi-class sweep** (colleague's new process_distributions, vendored as `cls_reference.py`): one CLS file per class, named `CLS_DISTR_{sym}__{predicted}-{predictor}_{month}_{cls}`, columns ordered by `class_values`. Empty = legacy single-class mode: old `[P(0),P(+1),P(−1)]` order and naming, matching the frozen baseline. Verified by user-run `tests/verify_cls_v2.py`. |
+| `class_values` | [-1,0,1] | class column order in v2 mode (`[P(−1),P(0),P(+1)]`); ignored in legacy mode |
 | `class_theta` | 0 (auto) | class threshold θ; 0 = built-in default per class |
 | `num_classes` | 3 | down / flat / up |
 | `sample_size` / `sample_after_length` / `random_state` | 1.0 / 30 / 42 | optional support subsampling for long n-grams |
