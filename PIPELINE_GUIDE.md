@@ -146,6 +146,7 @@ python -m pipeline init-config run.yaml    # write defaults, edit in any editor
 python -m pipeline validate  --config run.yaml
 python -m pipeline featurize --config run.yaml   # warm the day cache only
 python -m pipeline run       --config run.yaml   # distributions
+python -m pipeline ensemble  --config run.yaml   # ENS_TD_* ensemble tables
 python -m pipeline train     --config run.yaml   # model training
 python -m pipeline status                        # latest run's progress
 ```

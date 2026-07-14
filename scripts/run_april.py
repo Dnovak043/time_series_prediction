@@ -107,6 +107,7 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # complete per-symbol separation: own feature cache, outputs, models
     cfg.featurize.cache_dir = f"outputs/april/{symbol}/feature_cache"
     cfg.training.model_dir = f"outputs/april/{symbol}/models"
+    cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
     print(f"wrote {path}  ({len(dates)} days, filter ON, workers={workers})")
@@ -126,6 +127,10 @@ def main():
                          "(4 is Mac-RAM-safe; 0 = one per core on the box)")
     ap.add_argument("--skip-distributions", action="store_true")
     ap.add_argument("--only-distributions", action="store_true")
+    ap.add_argument("--with-ensemble", action="store_true",
+                    help="also build the fixed-length ENS_TD_* ensemble "
+                         "tables per symbol (25 files each; colleague's "
+                         "experiment)")
     args = ap.parse_args()
 
     data_dir = find_data_dir()
@@ -148,6 +153,17 @@ def main():
             run(RunConfig.load(cfg_path), run_id=f"april-{symbol}")
             print(f"{symbol} distributions done in {time.time()-t0:.0f}s "
                   f"-> outputs/april/{symbol}/")
+    # ---- optional: ensemble training tables (ENS_TD_*) --------------------------
+    if args.with_ensemble:
+        from pipeline.ensemble import run_ensemble
+        for symbol, cfg_path in configs.items():
+            print(f"\n=== ensemble tables: {symbol} ===")
+            t0 = time.time()
+            run_ensemble(RunConfig.load(cfg_path),
+                         run_id=f"april-ensemble-{symbol}")
+            print(f"{symbol} ensemble done in {time.time()-t0:.0f}s "
+                  f"-> outputs/april/{symbol}/ensemble/")
+
     if args.only_distributions:
         return
 
