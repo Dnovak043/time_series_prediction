@@ -177,21 +177,26 @@ def main():
     if not args.skip_distributions:
         from pipeline.runner import run
         for symbol, cfg_path in configs.items():
-            print(f"\n=== distributions: {symbol} ({len(dates)} days x "
-                  f"{len(DIST_PREDICTORS)} predictors x "
-                  f"{len(CLS_NAMES)} classes) ===")
+            cfg = RunConfig.load(cfg_path)      # banner derives from the CONFIG
+            print(f"\n=== distributions: {symbol} "
+                  f"({len(cfg.data.dates)} days x "
+                  f"{len(cfg.distributions.predictors)} predictors x "
+                  f"{len(cfg.distributions.class_names) or 1} classes) ===")
             t0 = time.time()
-            run(RunConfig.load(cfg_path), run_id=f"april-{symbol}")
+            run(cfg, run_id=f"april-{symbol}")
             print(f"{symbol} distributions done in {time.time()-t0:.0f}s "
                   f"-> outputs/april/{symbol}/")
     # ---- optional: ensemble training tables (ENS_TD_*) --------------------------
     if args.with_ensemble:
         from pipeline.ensemble import run_ensemble
         for symbol, cfg_path in configs.items():
-            print(f"\n=== ensemble tables: {symbol} ===")
+            cfg = RunConfig.load(cfg_path)      # banner derives from the CONFIG
+            print(f"\n=== ensemble tables: {symbol} "
+                  f"({len(cfg.ensemble.predictors)} channels x "
+                  f"{len(cfg.ensemble.seq_lengths)} lengths x "
+                  f"{len(cfg.ensemble.class_names)} classes) ===")
             t0 = time.time()
-            run_ensemble(RunConfig.load(cfg_path),
-                         run_id=f"april-ensemble-{symbol}")
+            run_ensemble(cfg, run_id=f"april-ensemble-{symbol}")
             print(f"{symbol} ensemble done in {time.time()-t0:.0f}s "
                   f"-> outputs/april/{symbol}/ensemble/")
 
