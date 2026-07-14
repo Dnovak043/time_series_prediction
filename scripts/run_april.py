@@ -127,13 +127,19 @@ def main():
                          "(4 is Mac-RAM-safe; 0 = one per core on the box)")
     ap.add_argument("--skip-distributions", action="store_true")
     ap.add_argument("--only-distributions", action="store_true")
+    ap.add_argument("--data-dir", default=None,
+                    help="directory containing the raw xnas-itch-* files "
+                         "(the NVDA_INTC folder). Default: auto-discover "
+                         "data/NVDA_INTC in/near the repo.")
     ap.add_argument("--with-ensemble", action="store_true",
                     help="also build the fixed-length ENS_TD_* ensemble "
                          "tables per symbol (25 files each; colleague's "
                          "experiment)")
     args = ap.parse_args()
 
-    data_dir = find_data_dir()
+    data_dir = Path(args.data_dir).resolve() if args.data_dir else find_data_dir()
+    if not data_dir.is_dir():
+        sys.exit(f"data dir not found: {data_dir}")
     pattern = detect_pattern(data_dir)
     dates = april_dates(data_dir, pattern)
     print(f"data: {data_dir}  (pattern: {pattern})\nApril days: {len(dates)} "

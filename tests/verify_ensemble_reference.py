@@ -154,11 +154,15 @@ def main():
                          "cross-day aggregation path)")
     ap.add_argument("--quick", action="store_true",
                     help="k in {1,2} x {c1, ca2} only (4 files)")
+    ap.add_argument("--data-dir", default=None,
+                    help="directory with the raw files (the NVDA_INTC "
+                         "folder); default: auto-discover")
     args = ap.parse_args()
 
     seq_lengths = [1, 2] if args.quick else ALL_LENGTHS
     class_names = ["c1", "ca2"] if args.quick else ALL_CLASSES
-    data_dir = find_data_dir()
+    data_dir = (Path(args.data_dir).resolve() if args.data_dir
+                else find_data_dir())
 
     for d in (REF_DIR, NEW_DIR):
         d.mkdir(parents=True, exist_ok=True)
