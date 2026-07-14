@@ -100,7 +100,8 @@ def april_dates(data_dir: Path, pattern: str) -> list[str]:
 
 def make_config(symbol: str, data_dir: Path, dates: list[str],
                 workers: int, predictors: list[str] | None = None,
-                file_pattern: str | None = None) -> Path:
+                file_pattern: str | None = None, epochs: int = 3000,
+                n_qubits: int = 3, seed: int = -1) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -120,6 +121,9 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # complete per-symbol separation: own feature cache, outputs, models
     cfg.featurize.cache_dir = f"outputs/april/{symbol}/feature_cache"
     cfg.training.model_dir = f"outputs/april/{symbol}/models"
+    cfg.training.epochs = epochs
+    cfg.training.n_qubits = n_qubits
+    cfg.training.seed = seed
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
@@ -159,7 +163,9 @@ def main():
           f"({dates[0]}..{dates[-1]})")
 
     configs = {s: make_config(s, data_dir, dates, args.workers,
-                              None, pattern)   # None -> DIST_PREDICTORS
+                              None, pattern,   # None -> DIST_PREDICTORS
+                              epochs=args.epochs, n_qubits=args.n_qubits,
+                              seed=-1 if args.seed is None else args.seed)
                for s in args.symbols}
 
     # ---- stage 2: distributions -------------------------------------------------
@@ -197,10 +203,19 @@ def main():
         distr_dir = ROOT / "outputs" / "april" / symbol
         out_dir = distr_dir / "models"
         out_dir.mkdir(parents=True, exist_ok=True)
+        t = RunConfig.load(configs[symbol]).training
         print(f"\n=== MODEL {i}/{len(combos)}: {symbol} x {predictor} "
-              f"(epochs={args.epochs}, {args.n_qubits}q) ===")
-        r = run_one(predictor, distr_dir, out_dir, args.epochs, args.seed,
-                    symbol=symbol, n_qubits=args.n_qubits)
+              f"(epochs={t.epochs}, {t.n_qubits}q, batch={t.batch_size}, "
+              f"lr={t.lr}, {t.optimizer}/{t.loss_kind}, "
+              f"seed={'unseeded' if t.seed < 0 else t.seed}) ===")
+        r = run_one(predictor, distr_dir, out_dir, t.epochs,
+                    None if t.seed < 0 else t.seed,
+                    symbol=symbol, n_qubits=t.n_qubits,
+                    m=RunConfig.load(configs[symbol]).alphabet_size,
+                    max_seq_len=t.max_seq_len, min_seq_prob=t.min_seq_prob,
+                    batch_size=t.batch_size, lr=t.lr,
+                    optimizer_name=t.optimizer, loss_kind=t.loss_kind,
+                    learn_rho0=t.learn_rho0, device=t.device)
         results.append(r)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(results, indent=1))

@@ -209,6 +209,8 @@ class TrainingConfig:
                            "'none' to force CPU.", advanced=True)
     max_parallel: int = _f(0, "Max concurrent trainings in `train-all`. "
                               "0 = auto: one per GPU, else 1 (CPU).")
+    seed: int = _f(-1, "Torch seed for training. -1 = unseeded, the original "
+                       "main() behavior (results vary run to run).")
 
 
 # ---------------------------------------------------------------------------

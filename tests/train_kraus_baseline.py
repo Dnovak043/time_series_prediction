@@ -87,7 +87,16 @@ def find_distr_dir(cli_value: str | None, symbol: str = SYMBOL) -> Path:
 
 def run_one(predictor: str, distr_dir: Path, out_dir: Path,
             epochs: int, seed: int | None,
-            symbol: str = SYMBOL, n_qubits: int = N_QUBITS) -> dict:
+            symbol: str = SYMBOL, n_qubits: int = N_QUBITS,
+            m: int = M, max_seq_len: int = MAX_SEQ_LEN,
+            min_seq_prob: float = MIN_SEQ_PROB,
+            batch_size: int = 6 * 512, lr: float = 1e-3,
+            optimizer_name: str = "adam", loss_kind: str = "nll_seq",
+            learn_rho0: bool = True, num_workers: int = 8,
+            device: str | None = None) -> dict:
+    """Defaults are the original main() values; the April surfaces pass every
+    one of these explicitly from the RunConfig so nothing is invisible.
+    device=None keeps the original selection (cuda if available else cpu)."""
     # ---- from here on: main()'s bivariate branch, step for step ----
     title = "SEQ_DISTR_" + symbol + "_" + VARIATE + "_" + PREDICTED \
             + "-" + predictor + "_" + DATE   # dash: the name the files really have
@@ -101,7 +110,7 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
 
     sequences, emp_probs = [], []
     for i in range(len(sequences_all)):
-        if len(sequences_all[i]) <= MAX_SEQ_LEN and emp_probs_all[i] > MIN_SEQ_PROB:
+        if len(sequences_all[i]) <= max_seq_len and emp_probs_all[i] > min_seq_prob:
             sequences.append(sequences_all[i])
             emp_probs.append(emp_probs_all[i])
     print("Number of examples ", len(sequences))
@@ -111,17 +120,19 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
         torch.manual_seed(seed)
 
     t0 = time.time()
+    if device is None or device == "auto":   # original main() selection
+        device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
     model = lk.train(
-        sequences, emp_probs, MAX_SEQ_LEN,
-        M, n_qubits,
-        batch_size=6 * 512,
-        lr=1e-3,
+        sequences, emp_probs, max_seq_len,
+        m, n_qubits,
+        batch_size=batch_size,
+        lr=lr,
         epochs=epochs,
-        learn_rho0=True,
+        learn_rho0=learn_rho0,
         model=None,
-        num_workers=8,
-        device="cuda" if __import__("torch").cuda.is_available() else "cpu",
-        optimizer_name="adam", loss_kind="nll_seq")
+        num_workers=num_workers,
+        device=device,
+        optimizer_name=optimizer_name, loss_kind=loss_kind)
     train_seconds = time.time() - t0
 
     # ---- post-optimization block, verbatim ----
@@ -162,7 +173,7 @@ def run_one(predictor: str, distr_dir: Path, out_dir: Path,
         pickle.dump([model, sequences, emp_probs], fh)
     lk.save_model_weights(
         out_dir / model_file_name, model,
-        meta={"m": M, "n_qubits": n_qubits, "d": 2 ** n_qubits,
+        meta={"m": m, "n_qubits": n_qubits, "d": 2 ** n_qubits,
               "learn_rho0": True, "predictor": predictor, "symbol": symbol,
               "epochs": epochs, "seed": seed})
 

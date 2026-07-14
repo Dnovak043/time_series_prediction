@@ -64,3 +64,4 @@ training:
   predictors: []
   gpus: auto
   max_parallel: 0
+  seed: -1
