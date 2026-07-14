@@ -61,7 +61,7 @@ training:
   device: auto
   continue_from: ''
   model_dir: outputs/april/INTC/models
-  predictors: []
+  predictors: [tvi_n, obi_L1, ofi_L1_n_norm]
   gpus: auto
   max_parallel: 0
   seed: -1

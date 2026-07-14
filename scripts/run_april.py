@@ -101,7 +101,8 @@ def april_dates(data_dir: Path, pattern: str) -> list[str]:
 def make_config(symbol: str, data_dir: Path, dates: list[str],
                 workers: int, predictors: list[str] | None = None,
                 file_pattern: str | None = None, epochs: int = 3000,
-                n_qubits: int = 3, seed: int = -1) -> Path:
+                n_qubits: int = 3, seed: int = -1,
+                train_predictors: list[str] | None = None) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -124,6 +125,9 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     cfg.training.epochs = epochs
     cfg.training.n_qubits = n_qubits
     cfg.training.seed = seed
+    # the models this experiment trains (boss's 3) — explicit in the config,
+    # and what train-all would sweep for this config too
+    cfg.training.predictors = list(train_predictors or PREDICTORS)
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
@@ -165,7 +169,8 @@ def main():
     configs = {s: make_config(s, data_dir, dates, args.workers,
                               None, pattern,   # None -> DIST_PREDICTORS
                               epochs=args.epochs, n_qubits=args.n_qubits,
-                              seed=-1 if args.seed is None else args.seed)
+                              seed=-1 if args.seed is None else args.seed,
+                              train_predictors=args.predictors)
                for s in args.symbols}
 
     # ---- stage 2: distributions -------------------------------------------------
@@ -198,7 +203,8 @@ def main():
 
     summary_path = ROOT / "outputs" / "april" / "april_summary.json"
     results = []
-    combos = [(s, p) for s in args.symbols for p in args.predictors]
+    combos = [(s, p) for s in args.symbols
+              for p in RunConfig.load(configs[s]).training.predictors]
     for i, (symbol, predictor) in enumerate(combos, 1):
         distr_dir = ROOT / "outputs" / "april" / symbol
         out_dir = distr_dir / "models"
