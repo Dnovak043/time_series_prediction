@@ -124,6 +124,40 @@ class DistributionConfig:
 
 
 @dataclass
+class EnsembleConfig:
+    """Fixed-length multi-channel ensemble training tables (ENS_TD_* pickles).
+
+    Implements the colleague's ensemble_training_data.py experiment: for each
+    (sequence length, class definition), align every predictor channel's
+    bivariate encoding on identical timestamps and count joint + per-channel
+    marginal occurrences with class-conditional distributions. The counting
+    math is imported verbatim from ensemble_reference.py."""
+    seq_lengths: list = _f(lambda: [1, 2, 3, 4, 5],
+                           "Fixed sequence lengths, one ENS_TD_* output set "
+                           "per length. (Colleague's script: 1-5.)")
+    class_names: list = _f(lambda: ["c1", "c2", "c4", "ca2", "ca4"],
+                           "Class definitions to sweep; one output set per "
+                           "class per length.")
+    class_values: list = _f(lambda: [-1, 0, 1],
+                            "Ordered class labels; output distribution "
+                            "columns follow this order: [P(-1), P(0), P(1)].",
+                            advanced=True)
+    predictors: list = _f(lambda: ["log_mid", "tvi_n", "obi_L1", "ofi_L1_n",
+                                   "ofi_L1_n_norm", "ofi_L1_norm_n",
+                                   "ofi_L3_norm_n", "ofi_L10_norm_n",
+                                   "micro_price", "vpin", "sigma_W"],
+                          "Ensemble channels (each becomes one bivariate "
+                          "encoding vs `distributions.predicted`). The "
+                          "colleague's default deliberately includes the "
+                          "predicted feature itself as a channel.")
+    smoothing: float = _f(0.0, "Symmetric Dirichlet pseudocount for the "
+                               "target class distributions; 0 = raw empirical.",
+                          advanced=True)
+    output_dir: str = _f("outputs/ensemble",
+                         "Where ENS_TD_* pickles are written.")
+
+
+@dataclass
 class TrainingConfig:
     """SEQ_DISTR_* pickle -> trained sequence model."""
     model: str = _f("kraus", "Model family; registered trainers appear in "
@@ -170,6 +204,7 @@ STAGES = {
     "featurize": FeaturizeConfig,
     "encode": EncodeConfig,
     "distributions": DistributionConfig,
+    "ensemble": EnsembleConfig,
     "training": TrainingConfig,
 }
 
@@ -180,6 +215,7 @@ class RunConfig:
     featurize: FeaturizeConfig = field(default_factory=FeaturizeConfig)
     encode: EncodeConfig = field(default_factory=EncodeConfig)
     distributions: DistributionConfig = field(default_factory=DistributionConfig)
+    ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
     # -- derived values -----------------------------------------------------

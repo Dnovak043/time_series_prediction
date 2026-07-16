@@ -206,6 +206,11 @@ class ControlPanel:
                                tooltip="one training per predictor, parallel "
                                        "across visible GPUs (CPU fallback)",
                                layout=W.Layout(width="200px"))
+        b_ensemble = W.Button(description="▶ Ensemble tables",
+                              button_style="warning",
+                              tooltip="fixed-length ENS_TD_* training tables "
+                                      "(ensemble stage tab has the knobs)",
+                              layout=W.Layout(width="170px"))
         b_stop = W.Button(description="■ Stop", button_style="danger",
                           layout=W.Layout(width="100px"))
         self.w_runs = W.Dropdown(options=list_runs(self.root),
@@ -223,6 +228,7 @@ class ControlPanel:
         b_run.on_click(lambda _: self._launch("run"))
         b_train.on_click(lambda _: self._launch("train"))
         b_train_all.on_click(lambda _: self._launch("train-all"))
+        b_ensemble.on_click(lambda _: self._launch("ensemble"))
         b_stop.on_click(lambda _: self._stop_current())
         b_refresh.on_click(
             lambda _: setattr(self.w_runs, "options", list_runs(self.root)))
@@ -232,7 +238,7 @@ class ControlPanel:
             W.HTML("<b>Launch</b> — saves the config, then starts a detached "
                    "<code>python -m pipeline</code> subprocess (survives "
                    "notebook restarts / SSH drops)."),
-            W.HBox([b_run, b_train, b_train_all, b_stop]),
+            W.HBox([b_run, b_ensemble, b_train, b_train_all, b_stop]),
             W.HBox([self.w_runs, b_refresh, b_attach]),
             self.w_progress, self.w_run_status,
             W.HTML("<b>log tail</b>"), self.w_log,
