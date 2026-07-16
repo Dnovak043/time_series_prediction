@@ -1,5 +1,11 @@
 # time_series_prediction — Architecture & Performance Map
 
+> **Historical document.** This maps the research code and its bottlenecks
+> *as of the frozen baseline* (tag `baseline`, commit 0182a85), and was the
+> blueprint for the optimization work that followed. Start with `README.md`
+> for the current codebase; the roadmap below (§5, §7) has since been
+> implemented and byte-verified — see README §6.
+
 Prepared for an agent picking up work in this repo. This is a read-only research
 document — **no data files were touched or modified while producing it**, and
 none of the recommendations below should be applied to `data/` (raw market data
