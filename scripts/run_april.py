@@ -52,7 +52,14 @@ import pipeline  # noqa: E402,F401
 from pipeline.config import RunConfig  # noqa: E402
 
 SYMBOLS = ["NVDA", "INTC"]
-PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # features_list[1..3]
+PREDICTED = "log_mid"   # features[0] in BOTH colleague files: every output
+                        # is a bivariate (log_mid, predictor) pair
+PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # TRAINING (boss's 3 models/symbol)
+# distribution stage: colleague's full spec (his email / cls_reference.py)
+DIST_PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n", "ofi_L1_n_norm",
+                   "ofi_L1_norm_n", "ofi_L3_norm_n", "ofi_L10_norm_n",
+                   "micro_price", "vpin", "sigma_W"]
+CLS_NAMES = ["c1", "c2", "c4", "ca2", "ca4"]        # one CLS file per class
 MONTH = "202504"
 
 
@@ -93,7 +100,9 @@ def april_dates(data_dir: Path, pattern: str) -> list[str]:
 
 def make_config(symbol: str, data_dir: Path, dates: list[str],
                 workers: int, predictors: list[str] | None = None,
-                file_pattern: str | None = None) -> Path:
+                file_pattern: str | None = None, epochs: int = 3000,
+                n_qubits: int = 3, seed: int = -1,
+                train_predictors: list[str] | None = None) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -101,12 +110,24 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     if file_pattern:
         cfg.data.file_pattern = file_pattern
     cfg.data.instrument_filter = True
-    cfg.distributions.predictors = list(predictors or PREDICTORS)
+    # colleague's new process_distributions spec: 10 predictors (superset of
+    # the 3 training predictors -> their SEQ files come out of the same run),
+    # v2 multi-class CLS sweep with (-1,0,1) column order
+    cfg.distributions.predicted = PREDICTED
+    cfg.distributions.predictors = list(predictors or DIST_PREDICTORS)
+    cfg.distributions.class_names = list(CLS_NAMES)
+    cfg.distributions.class_values = [-1, 0, 1]
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
     cfg.featurize.workers = workers
     # complete per-symbol separation: own feature cache, outputs, models
     cfg.featurize.cache_dir = f"outputs/april/{symbol}/feature_cache"
     cfg.training.model_dir = f"outputs/april/{symbol}/models"
+    cfg.training.epochs = epochs
+    cfg.training.n_qubits = n_qubits
+    cfg.training.seed = seed
+    # the models this experiment trains (boss's 3) — explicit in the config,
+    # and what train-all would sweep for this config too
+    cfg.training.predictors = list(train_predictors or PREDICTORS)
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
@@ -146,27 +167,36 @@ def main():
           f"({dates[0]}..{dates[-1]})")
 
     configs = {s: make_config(s, data_dir, dates, args.workers,
-                              args.predictors, pattern)
+                              None, pattern,   # None -> DIST_PREDICTORS
+                              epochs=args.epochs, n_qubits=args.n_qubits,
+                              seed=-1 if args.seed is None else args.seed,
+                              train_predictors=args.predictors)
                for s in args.symbols}
 
     # ---- stage 2: distributions -------------------------------------------------
     if not args.skip_distributions:
         from pipeline.runner import run
         for symbol, cfg_path in configs.items():
+            cfg = RunConfig.load(cfg_path)      # banner derives from the CONFIG
             print(f"\n=== distributions: {symbol} "
-                  f"({len(dates)} days x {len(args.predictors)} predictors) ===")
+                  f"({len(cfg.data.dates)} days x "
+                  f"{len(cfg.distributions.predictors)} predictors x "
+                  f"{len(cfg.distributions.class_names) or 1} classes) ===")
             t0 = time.time()
-            run(RunConfig.load(cfg_path), run_id=f"april-{symbol}")
+            run(cfg, run_id=f"april-{symbol}")
             print(f"{symbol} distributions done in {time.time()-t0:.0f}s "
                   f"-> outputs/april/{symbol}/")
     # ---- optional: ensemble training tables (ENS_TD_*) --------------------------
     if args.with_ensemble:
         from pipeline.ensemble import run_ensemble
         for symbol, cfg_path in configs.items():
-            print(f"\n=== ensemble tables: {symbol} ===")
+            cfg = RunConfig.load(cfg_path)      # banner derives from the CONFIG
+            print(f"\n=== ensemble tables: {symbol} "
+                  f"({len(cfg.ensemble.predictors)} channels x "
+                  f"{len(cfg.ensemble.seq_lengths)} lengths x "
+                  f"{len(cfg.ensemble.class_names)} classes) ===")
             t0 = time.time()
-            run_ensemble(RunConfig.load(cfg_path),
-                         run_id=f"april-ensemble-{symbol}")
+            run_ensemble(cfg, run_id=f"april-ensemble-{symbol}")
             print(f"{symbol} ensemble done in {time.time()-t0:.0f}s "
                   f"-> outputs/april/{symbol}/ensemble/")
 
@@ -178,15 +208,25 @@ def main():
 
     summary_path = ROOT / "outputs" / "april" / "april_summary.json"
     results = []
-    combos = [(s, p) for s in args.symbols for p in args.predictors]
+    combos = [(s, p) for s in args.symbols
+              for p in RunConfig.load(configs[s]).training.predictors]
     for i, (symbol, predictor) in enumerate(combos, 1):
         distr_dir = ROOT / "outputs" / "april" / symbol
         out_dir = distr_dir / "models"
         out_dir.mkdir(parents=True, exist_ok=True)
+        t = RunConfig.load(configs[symbol]).training
         print(f"\n=== MODEL {i}/{len(combos)}: {symbol} x {predictor} "
-              f"(epochs={args.epochs}, {args.n_qubits}q) ===")
-        r = run_one(predictor, distr_dir, out_dir, args.epochs, args.seed,
-                    symbol=symbol, n_qubits=args.n_qubits)
+              f"(epochs={t.epochs}, {t.n_qubits}q, batch={t.batch_size}, "
+              f"lr={t.lr}, {t.optimizer}/{t.loss_kind}, "
+              f"seed={'unseeded' if t.seed < 0 else t.seed}) ===")
+        r = run_one(predictor, distr_dir, out_dir, t.epochs,
+                    None if t.seed < 0 else t.seed,
+                    symbol=symbol, n_qubits=t.n_qubits,
+                    m=RunConfig.load(configs[symbol]).alphabet_size,
+                    max_seq_len=t.max_seq_len, min_seq_prob=t.min_seq_prob,
+                    batch_size=t.batch_size, lr=t.lr,
+                    optimizer_name=t.optimizer, loss_kind=t.loss_kind,
+                    learn_rho0=t.learn_rho0, device=t.device)
         results.append(r)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(results, indent=1))

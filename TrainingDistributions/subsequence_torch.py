@@ -175,26 +175,36 @@ def estimate_subsequence_class_probabilities_torch(
     max_subsequence_length: int,
     non_zero_only: bool = True,
     device: str | torch.device | None = None,
+    class_values=None,
 ):
     """
     Drop-in replacement for estimate_subsequence_class_probabilities
     (process_distributions.py): empirical class distribution at the
     terminal point of every observed subsequence of length 1..max.
 
-    seq must contain non-negative integer symbols; classes must contain
-    integer labels in [-num_classes, num_classes) — negative labels wrap
-    to the tail slots exactly as the reference's list[-1] indexing does
-    (label -1 -> slot num_classes-1).
+    Two column conventions, selected by `class_values`:
+
+    - class_values=None (legacy / frozen-baseline behavior): labels in
+      [-num_classes, num_classes) wrap via list[-1]-style indexing, so
+      with 3 classes the columns are [P(0), P(+1), P(-1)].
+    - class_values=(-1, 0, 1) (cls_reference.py v2 behavior): columns
+      follow this explicit order — [P(-1), P(0), P(+1)] — and any label
+      outside class_values raises ValueError, matching the rewritten
+      reference exactly.
 
     Returns (all_subsequences, distributions); distributions[k] rows are
     [subseq_tuple, class_counts, class_probs, total_occurrences] in
-    lexicographic order, identical to the reference. all_subsequences
-    holds only the emitted subsequences per length (see module docstring).
+    lexicographic order, identical to the respective reference.
+    all_subsequences holds only the emitted subsequences per length
+    (see module docstring).
     """
     if len(seq) != len(classes):
         raise ValueError("seq and classes must have the same length.")
     if max_subsequence_length < 1:
         raise ValueError("max_subsequence_length must be >= 1.")
+    if class_values is not None:
+        class_values = tuple(int(v) for v in class_values)
+        num_classes = len(class_values)
     if num_classes < 1:
         raise ValueError("num_classes must be >= 1.")
 
@@ -207,13 +217,29 @@ def estimate_subsequence_class_probabilities_torch(
         if int(seq_t.min().item()) < 0:
             raise ValueError("seq symbols must be non-negative integers.")
         cmin, cmax = int(cls_t.min().item()), int(cls_t.max().item())
-        if cmin < -num_classes or cmax >= num_classes:
+        if class_values is not None:
+            # v2: explicit label -> column position, unknown labels raise
+            # (mirrors cls_reference's class_to_index + validation)
+            lo, hi = min(class_values), max(class_values)
+            if cmin < lo or cmax > hi:
+                raise ValueError(
+                    f"Unknown class labels found: range [{cmin}, {cmax}] "
+                    f"outside expected labels {class_values}.")
+            lut = torch.full((hi - lo + 1,), -1, dtype=torch.int64, device=dev)
+            for idx, label in enumerate(class_values):
+                lut[label - lo] = idx
+            cls_t = lut[cls_t - lo]
+            if int(cls_t.min().item()) < 0:
+                raise ValueError(
+                    f"Unknown class labels found; expected {class_values}.")
+        elif cmin < -num_classes or cmax >= num_classes:
             raise ValueError(
                 f"class labels must lie in [{-num_classes}, {num_classes}); "
                 f"got range [{cmin}, {cmax}]."
             )
-        # list[-1] indexing in the reference == modular wrap
-        cls_t = cls_t % num_classes
+        if class_values is None:
+            # list[-1] indexing in the reference == modular wrap
+            cls_t = cls_t % num_classes
         base = int(seq_t.max().item()) + 1
         observed_t = torch.unique(seq_t)  # sorted ascending
     else:

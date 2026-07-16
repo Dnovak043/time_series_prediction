@@ -363,7 +363,12 @@ class ControlPanel:
                 n_cls = len(probs[0]) if probs else 0
                 x = range(len(rows))
                 width = 0.8 / max(n_cls, 1)
-                cls_names = {0: "flat(0)", 1: "up(1)", 2: "down(-1)"}
+                if getattr(self.cfg.distributions, "class_names", []):
+                    # v2 files: columns follow class_values order
+                    cls_names = {i: f"P({v})" for i, v in enumerate(
+                        self.cfg.distributions.class_values)}
+                else:   # legacy files: list[-1] wrap order
+                    cls_names = {0: "flat(0)", 1: "up(1)", 2: "down(-1)"}
                 for ci in range(n_cls):
                     ax.bar([xi + ci * width for xi in x],
                            [p[ci] for p in probs], width=width,

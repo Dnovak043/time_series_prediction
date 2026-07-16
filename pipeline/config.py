@@ -111,6 +111,19 @@ class DistributionConfig:
     class_name: str = _f("c1", "Forward-move class definition (c{k}: k-step "
                                "return sign; ca{k}: fwd vs bwd sum).",
                          choices=["c1", "c2", "c4", "ca1", "ca2", "ca4"])
+    class_names: list = _f(lambda: [],
+                           "V2 multi-class sweep (cls_reference.py): one "
+                           "CLS output per listed class, named "
+                           "CLS_DISTR_{sym}__{predicted}-{predictor}_{month}_"
+                           "{cls}, with class columns ordered by "
+                           "class_values. EMPTY = legacy single-class mode "
+                           "(class_name above, old column order "
+                           "[P(0),P(+1),P(-1)], old naming) — the frozen-"
+                           "baseline behavior.")
+    class_values: list = _f(lambda: [-1, 0, 1],
+                            "Class column order for the v2 sweep "
+                            "([P(-1),P(0),P(+1)] by default). Ignored in "
+                            "legacy mode.", advanced=True)
     class_theta: float = _f(0.0, "Class threshold theta. 0 = built-in default "
                                  "for the chosen class_name.")
     num_classes: int = _f(3, "Number of classes (down / flat / up).", advanced=True)
@@ -196,6 +209,8 @@ class TrainingConfig:
                            "'none' to force CPU.", advanced=True)
     max_parallel: int = _f(0, "Max concurrent trainings in `train-all`. "
                               "0 = auto: one per GPU, else 1 (CPU).")
+    seed: int = _f(-1, "Torch seed for training. -1 = unseeded, the original "
+                       "main() behavior (results vary run to run).")
 
 
 # ---------------------------------------------------------------------------
@@ -231,10 +246,16 @@ class RunConfig:
                 + self.distributions.predicted + "-" + predictor
                 + "_" + self.data.dates[0][:6])
 
-    def cls_distr_name(self, predictor: str) -> str:
-        return ("CLS_DISTR_" + self.data.symbol + "_bivariate_"
+    def cls_distr_name(self, predictor: str, cls_name: str | None = None) -> str:
+        if cls_name is None:   # legacy single-class naming (frozen baseline)
+            return ("CLS_DISTR_" + self.data.symbol + "_bivariate_"
+                    + self.distributions.predicted + "-" + predictor
+                    + "_" + self.data.dates[0][:6])
+        # v2 naming, verbatim from cls_reference.py's driver (including its
+        # double underscore and dropped "bivariate")
+        return ("CLS_DISTR_" + self.data.symbol + "_" + "_"
                 + self.distributions.predicted + "-" + predictor
-                + "_" + self.data.dates[0][:6])
+                + "_" + self.data.dates[0][:6] + "_" + cls_name)
 
     # -- (de)serialization ----------------------------------------------------
     def to_dict(self) -> dict:
