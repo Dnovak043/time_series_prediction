@@ -29,7 +29,21 @@ Exit code 0 = every output identical. Anything else = FAIL.
 Run it yourself (this script is meant to be run by YOU, not by automation):
 
     cd <repo root>
-    .env/bin/python tests/verify_against_baseline.py
+    .env/bin/python tests/verify_against_baseline.py          # full (~1h)
+    .env/bin/python tests/verify_against_baseline.py --fast   # ~4 min
+
+Full mode re-derives the ground truth: checks out the baseline tag, runs the
+untouched original driver, byte-compares, and on PASS writes
+tests/baseline_manifest.json — full sha256 of every baseline output plus the
+parsed scope, the tag commit, and the environment (platform/numpy/pandas).
+COMMIT that file: it is the golden reference minted by your own passing run.
+
+--fast skips the 55-minute baseline re-run entirely: the frozen code + frozen
+data are deterministic, so the manifest hashes ARE the baseline. It runs only
+the new pipeline and compares its outputs to the manifest. Use it for routine
+regression after changes; re-run full mode only if the manifest's environment
+no longer matches (float bit-patterns can differ across numpy builds — the
+script warns) or for a from-scratch audit.
 
 Expect roughly 45-60 minutes on the Mac: the original driver re-featurizes
 every day once per predictor (2 dates x 8 predictors), by design — that is
@@ -43,9 +57,13 @@ Notes:
   * Re-running is safe: previous outputs and the temporary worktree are
     removed first.
 """
+import argparse
 import ast
+import datetime as _dt
 import hashlib
+import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -221,17 +239,104 @@ def compare() -> bool:
     return ok
 
 
+MANIFEST = ROOT / "tests" / "baseline_manifest.json"
+
+
+def env_info() -> dict:
+    import numpy, pandas
+    return {"platform": platform.platform(),
+            "python": platform.python_version(),
+            "numpy": numpy.__version__, "pandas": pandas.__version__}
+
+
+def write_manifest(g: dict):
+    tag_commit = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", BASELINE_REF],
+        capture_output=True, text=True, check=True).stdout.strip()
+    files = {p.name: {"sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                      "bytes": p.stat().st_size}
+             for p in sorted(BASELINE_OUT.glob("*_DISTR_*"))}
+    MANIFEST.write_text(json.dumps({
+        "baseline_commit": tag_commit,
+        "generated": _dt.datetime.now().isoformat(timespec="seconds"),
+        "environment": env_info(),
+        "scope": g,
+        "files": files,
+    }, indent=1))
+    print(f"\ngolden manifest written: {MANIFEST}")
+    print("COMMIT IT — future --fast runs verify against these hashes "
+          "without re-running the baseline.")
+
+
+def compare_manifest(manifest: dict) -> bool:
+    new_files = {p.name for p in NEW_OUT.glob("*_DISTR_*")}
+    golden = manifest["files"]
+    ok = True
+    for name in sorted(set(golden) | new_files):
+        if name not in new_files:
+            print(f"  FAIL  {name}: in manifest but not produced")
+            ok = False
+            continue
+        if name not in golden:
+            print(f"  FAIL  {name}: produced but not in manifest")
+            ok = False
+            continue
+        h = hashlib.sha256((NEW_OUT / name).read_bytes()).hexdigest()
+        if h == golden[name]["sha256"]:
+            print(f"  IDENTICAL  {name}  sha256:{h[:16]}")
+        else:
+            print(f"  FAIL  {name}: sha256 {h[:16]} != manifest "
+                  f"{golden[name]['sha256'][:16]}")
+            ok = False
+    return ok
+
+
 def cleanup_worktree():
     subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force",
                     str(SRC)], capture_output=True)
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fast", action="store_true",
+                    help="verify against tests/baseline_manifest.json "
+                         "instead of re-running the frozen baseline (~4 min "
+                         "vs ~1h). Requires a committed manifest from a "
+                         "previous full PASS.")
+    args = ap.parse_args()
+
     SCRATCH.mkdir(parents=True, exist_ok=True)
     for d in (BASELINE_OUT, NEW_OUT):
         d.mkdir(parents=True, exist_ok=True)
-        for p in d.glob("*_DISTR_*"):
-            p.unlink()
+        if d is BASELINE_OUT and args.fast:
+            continue
+        for f in d.glob("*_DISTR_*"):
+            f.unlink()
+
+    if args.fast:
+        if not MANIFEST.exists():
+            sys.exit("No tests/baseline_manifest.json — run full mode once "
+                     "to mint it (your own passing run writes it).")
+        manifest = json.loads(MANIFEST.read_text())
+        env_now, env_then = env_info(), manifest["environment"]
+        if env_now != env_then:
+            print("WARNING: environment differs from the manifest's — float "
+                  "bit-patterns are not guaranteed identical across builds.")
+            print(f"  manifest: {env_then}\n  now:      {env_now}")
+            print("  A mismatch below may be environmental, not a code bug; "
+                  "re-run full mode on this machine to re-mint if needed.")
+        print(f"golden manifest: baseline {manifest['baseline_commit'][:9]}, "
+              f"generated {manifest['generated']}")
+        run_new(manifest["scope"])
+        print("\n=== comparison vs golden manifest ===")
+        ok = compare_manifest(manifest)
+        if ok:
+            print("\nVERIFICATION PASSED (fast): new pipeline matches the "
+                  "golden baseline hashes")
+        else:
+            print(f"\nVERIFICATION FAILED — outputs kept in {SCRATCH}")
+            sys.exit(1)
+        return
 
     checkout_baseline()
     g = parse_baseline_globals(
@@ -246,6 +351,7 @@ def main():
     if ok:
         print("\nVERIFICATION PASSED: new pipeline reproduces the frozen "
               "baseline byte-for-byte")
+        write_manifest(g)
     else:
         print("\nVERIFICATION FAILED — outputs kept in "
               f"{SCRATCH} for inspection")
