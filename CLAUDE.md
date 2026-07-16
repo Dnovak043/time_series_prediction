@@ -67,7 +67,12 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 ## Verification suite (user-run; see PIPELINE_GUIDE.md §6-7)
 
 - `tests/verify_against_baseline.py` — pristine `baseline`-tag code vs
-  pipeline, byte-for-byte (Mac only; ~1h). The trust anchor.
+  pipeline, byte-for-byte (Mac only). The trust anchor. Full mode (~1h)
+  re-derives the ground truth and on PASS mints
+  `tests/baseline_manifest.json` (golden sha256s + scope + environment;
+  committed). `--fast` (~4 min) verifies against the manifest without
+  re-running the baseline — use for routine regression; environment
+  mismatch prints a loud warning (re-mint on that machine if so).
 - `tests/parity_check.py`, `tests/test_pipeline_units.py`,
   `tests/test_parallel_run.py`, `tests/test_fast_ops.py`,
   `tests/test_seq_counts_torch.py`, `tests/test_train_all_smoke.py`.
