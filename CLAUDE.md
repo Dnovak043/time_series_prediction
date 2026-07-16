@@ -81,21 +81,20 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 - `april_smoke.ipynb` — 1-day plumbing check of every April stage; expected
   counts derived from the config. Run before `april_run.ipynb`.
 
-## Current state (2026-07-14)
+## Current state (2026-07-16)
 
-- Branch chain: `dev` ← PR #4 `ensemble-integration` ← PR #5
-  `distributions-v2` (both draft, verified, unmerged; merge #4 then #5,
-  retarget #5 to dev after #4 lands).
-- The April experiment (`april_run.ipynb` = notebook driver,
-  `scripts/run_april.py` = CLI twin, on `distributions-v2`): both symbols
-  fully separated (filter ON, own caches/outputs under
-  `outputs/april/{SYMBOL}/`), per symbol: 10 SEQ + 50 CLS-v2 + 25 ENS_TD
-  files + 3 trained Kraus models (boss's spec: 2 result files + 4 charts
-  each, sent per-model as they finish). Training defaults = original
-  `LearningKraus.main()` values (3000 epochs, 3q, batch 3072, lr 1e-3, adam,
-  nll_seq, unseeded).
-- Open question for colleague: ensemble `seq_lengths` stops at 5 while
-  `max_seq_length = 6` sits unused in his file — intended?
+- PRs #1–#5 all merged into `dev`; no open feature branches. Branch picture:
+  `main` (locked, frozen baseline) + `dev` (everything). All equivalence
+  suites user-run and PASSED before their merges.
+- The April experiment is ready to run on the compute box:
+  `april_smoke.ipynb` first, then `april_run.ipynb` (Linux params baked in:
+  workers=0, ensemble on). Per symbol: 10 SEQ + 50 CLS-v2 + 25 ENS_TD files
+  + 3 trained Kraus models (2 result files + 4 charts each, sent per-model).
+  Training defaults = original `LearningKraus.main()` values.
+- `tests/baseline_manifest.json` not yet minted — first full
+  `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
+- Open question for colleague: ensemble `seq_lengths` stops at 5 while his
+  `max_seq_length = 6` sits unused — intended?
 
 ## Conventions
 

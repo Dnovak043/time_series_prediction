@@ -36,3 +36,4 @@ SEQ_DISTR_*
 CLS_DISTR_*
 # user-local pipeline config (copy from configs/default.yaml)
 run.yaml
+output.zip
