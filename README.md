@@ -90,7 +90,7 @@ channel pairs it with several at once); it appears in every filename.
 | `compare_main_vs_dev.ipynb` | Visual/hash comparison of frozen-baseline outputs vs current outputs. |
 | `tests/` | Verification harnesses — see §6. `train_kraus_baseline.py` is the verbatim-`main()` training harness the April run uses. |
 | `configs/` | Generated experiment configs (`april_nvda.yaml`, `april_intc.yaml`) + `default.yaml`. |
-| `data/NVDA_INTC/` | Raw Databento files, **gitignored, immutable — never write here**. |
+| `data/` | Raw Databento files, one directory per asset source (`NVDA_INTC/`, `AAPL/`, `IBM/`, …), **gitignored, immutable — never write here**. |
 | `outputs/` | Everything produced: feature caches, distributions, models, run logs (`outputs/runs/<id>/` has `config.yaml` + `progress.json` + `run.log` per run). Gitignored. |
 
 ## 3. The data
@@ -98,7 +98,14 @@ channel pairs it with several at once); it appears in every filename.
 - One file per trading day: `xnas-itch-YYYYMMDD.mbp-10.dbn[.zst]` — Databento
   MBP-10 order-book snapshots + trades. Plain `.dbn` and zstd-compressed
   read identically; discovery auto-detects.
-- **Each file contains BOTH symbols interleaved** (20250401: ~5.2M NVDA +
+- **Several source directories can coexist under `data/`** — files share the
+  same per-day names but hold different assets (`data/NVDA_INTC/` = NVDA+INTC
+  interleaved, `data/AAPL/` = AAPL, `data/IBM/` = IBM). `data.asset_paths`
+  (config) maps each asset to its directory — several assets may share one —
+  and the run reads from the entry for `data.symbol`, falling back to
+  `data.data_path` for unlisted symbols. The feature cache keys on the
+  resolved directory, so same-named files never collide.
+- **Each `NVDA_INTC` file contains BOTH symbols interleaved** (20250401: ~5.2M NVDA +
   ~0.64M INTC events). The original code never filtered — its outputs are
   mixed-stream statistics. `data.instrument_filter: true` (config) enables
   true per-symbol runs; `false` reproduces the legacy/frozen-baseline

@@ -123,12 +123,70 @@ def test_multivariate_predictor():
     print("  PASS multivariate predictor (keys/alphabet/naming/validation)")
 
 
+def test_asset_paths():
+    catalog = {"NVDA": "data/NVDA_INTC", "INTC": "data/NVDA_INTC",
+               "AAPL": "data/AAPL", "IBM": "data/IBM"}
+
+    # resolution: empty mapping and unlisted symbols fall back to data_path
+    cfg = RunConfig()
+    assert cfg.data.resolved_data_path() == cfg.data.data_path
+    cfg.data.asset_paths = dict(catalog)
+    cfg.data.symbol = "AAPL"
+    assert cfg.data.resolved_data_path() == "data/AAPL"
+    cfg.data.symbol = "INTC"
+    assert cfg.data.resolved_data_path() == "data/NVDA_INTC"
+    cfg.data.symbol = "TSLA"                        # not in the catalog
+    assert cfg.data.resolved_data_path() == cfg.data.data_path
+    assert cfg.validate() == [], cfg.validate()
+    cfg.data.asset_paths = {"NVDA": 3}
+    assert any("asset_paths" in p for p in cfg.validate())
+
+    # cache keys: legacy configs (no resolution) keep their existing entries;
+    # a resolved symbol keys on its directory, since same-named files in
+    # different directories hold different assets
+    legacy = RunConfig()
+    legacy.data.symbol = "TSLA"
+    legacy_key = DayFeatureCache(legacy.data, legacy.featurize).params_key()
+    cfg = RunConfig()
+    cfg.data.asset_paths = dict(catalog)
+    cfg.data.symbol = "TSLA"                        # falls back -> same key
+    assert DayFeatureCache(cfg.data, cfg.featurize).params_key() == legacy_key
+    cfg.data.asset_paths["TSLA"] = "data/TSLA"      # resolves -> keyed on dir
+    k_tsla = DayFeatureCache(cfg.data, cfg.featurize).params_key()
+    assert k_tsla != legacy_key
+    cfg.data.asset_paths["TSLA"] = "data/OTHER"     # different dir, new key
+    assert DayFeatureCache(cfg.data, cfg.featurize).params_key() != k_tsla
+
+    # yaml roundtrip with the mapping
+    cfg = RunConfig()
+    cfg.data.asset_paths = dict(catalog)
+    with tempfile.TemporaryDirectory() as d:
+        cfg2 = RunConfig.load(cfg.save(Path(d) / "cfg.yaml"))
+    assert cfg2.data.asset_paths == catalog
+
+    # the checked-in default config carries the catalog and validates
+    cfg3 = RunConfig.load(Path(__file__).resolve().parent.parent
+                          / "configs" / "default.yaml")
+    assert cfg3.data.asset_paths == catalog
+    assert cfg3.validate() == [], cfg3.validate()
+
+    # control-panel round trip of a dict field
+    from pipeline.ui import _make_widget, _read_widget
+    from pipeline.config import field_info
+    info = [i for i in field_info(cfg.data) if i["name"] == "asset_paths"][0]
+    w = _make_widget(info)
+    assert _read_widget(w, {}) == catalog
+    w.value = ""
+    assert _read_widget(w, {}) == {}
+    print("  PASS asset paths (resolution/cache key/yaml/default.yaml/ui)")
+
+
 if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore")
     for fn in [test_yaml_roundtrip, test_unknown_key_rejected, test_validate,
                test_cache_key, test_parse_hhmm,
                test_legacy_imports_side_effect_free, test_model_registry,
-               test_multivariate_predictor]:
+               test_multivariate_predictor, test_asset_paths]:
         fn()
     print("ALL UNIT TESTS PASSED")

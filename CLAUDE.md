@@ -1,7 +1,9 @@
 # time_series_prediction — project instructions
 
 Market-microstructure research pipeline: NASDAQ ITCH order-book data
-(NVDA/INTC, `data/NVDA_INTC/*.dbn[.zst]`) → LOB features → EWMA z-encoded
+(one directory per asset source under `data/` — `NVDA_INTC/`, `AAPL/`,
+`IBM/`, same per-day file names, different contents) → LOB features → EWMA
+z-encoded
 symbol sequences → empirical subsequence/class distributions → Kraus-operator
 (quantum-channel) models and ensemble training tables.
 
@@ -47,7 +49,11 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   (vectorized sigma_W/trade-sign, bit-identical), `ensemble_reference.py`,
   `ensemble_reference_2.py` and `cls_reference.py` (colleague's programs,
   vendored).
-- Key semantics: raw files carry BOTH symbols interleaved —
+- Key semantics: `data.asset_paths` maps each asset to its raw-data
+  directory (several assets may share one, e.g. NVDA/INTC); the run reads
+  the entry for `data.symbol`, unlisted symbols fall back to
+  `data.data_path`, and the feature cache keys on the resolved directory.
+  NVDA_INTC raw files carry BOTH symbols interleaved —
   `data.instrument_filter: true` is required for per-symbol runs (false =
   legacy mixed-stream = frozen-baseline behavior). CLS class-column order:
   legacy files are `[P(0), P(+1), P(−1)]` (list[-1] wrap); **v2**
@@ -118,6 +124,11 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `tests/verify_multivariate_seq.py` — awaiting the user's harness run.
   Training on the 256-symbol alphabet (m·d² = 256·64² complex params) is a
   compute-box job, not a Mac job.
+- Per-asset data paths (PR #8, stacked on #7): `data.asset_paths` +
+  `DataConfig.resolved_data_path()`; `configs/default.yaml` carries the
+  four-asset catalog (NVDA/INTC → NVDA_INTC, AAPL, IBM). `data/AAPL` and
+  `data/IBM` do not exist locally yet — config validation stays cheap and
+  does not check the directories.
 - `tests/baseline_manifest.json` not yet minted — first full
   `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
 

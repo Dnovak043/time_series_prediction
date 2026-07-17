@@ -44,8 +44,19 @@ def _f(default, help="", choices=None, advanced=False, **kw):
 class DataConfig:
     """Which raw market data to read (read-only; data/ is never written)."""
     symbol: str = _f("NVDA", "Ticker symbol (used in file naming and outputs).")
+    asset_paths: dict = _f(lambda: {},
+                           "Per-asset raw-data directory, e.g. {NVDA: "
+                           "data/NVDA_INTC, AAPL: data/AAPL}. Files share "
+                           "names across directories but hold different "
+                           "assets; several assets may map to the same "
+                           "directory (NVDA and INTC share one file). The "
+                           "run reads from the entry for `symbol`; symbols "
+                           "not listed fall back to data_path. Empty = "
+                           "always use data_path (legacy behavior).")
     data_path: str = _f("data/NVDA_INTC",
-                        "Directory with raw .dbn.zst files, relative to repo root.")
+                        "Directory with raw .dbn.zst files, relative to repo "
+                        "root. Fallback when `symbol` has no asset_paths "
+                        "entry.")
     file_pattern: str = _f("xnas-itch-{date}.mbp-10.dbn.zst",
                            "Raw file name pattern; {date} is replaced per day.",
                            advanced=True)
@@ -61,6 +72,11 @@ class DataConfig:
                                  "per-symbol runs.")
     session_start: str = _f("09:30", "Session start, Eastern time (HH:MM).")
     session_end: str = _f("15:30", "Session end, Eastern time (HH:MM).")
+
+    def resolved_data_path(self) -> str:
+        """Directory holding this run's raw files: the `symbol` entry in
+        asset_paths when present, else data_path."""
+        return (self.asset_paths or {}).get(self.symbol, self.data_path)
 
 
 @dataclass
@@ -346,6 +362,14 @@ class RunConfig:
         for d in self.data.dates:
             if not (len(str(d)) == 8 and str(d).isdigit()):
                 problems.append(f"data.dates entry {d!r} is not yyyymmdd")
+        if not isinstance(self.data.asset_paths, dict):
+            problems.append("data.asset_paths must be a mapping "
+                            "{symbol: directory}")
+        else:
+            for sym, p in self.data.asset_paths.items():
+                if not isinstance(sym, str) or not isinstance(p, str):
+                    problems.append(f"data.asset_paths entry {sym!r}: {p!r} "
+                                    "must be string: string")
         if self.encode.n_symbols < 2:
             problems.append("encode.n_symbols must be >= 2")
         if self.distributions.max_seq_length < 1:
