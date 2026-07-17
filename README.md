@@ -42,7 +42,7 @@ empirical distributions, aggregated over a month
 models
   ├── KrausInstrument (LearningKraus.py): 16 complex d×d operators, d=2^3;
   │   P(s₁…s_T) = Tr(K_{s_T}···K_{s_1} ρ₀ K†…) fitted to SEQ_DISTR by NLL
-  └── ensemble of pairwise models (colleague's line of work; ENS_TD_* is
+  └── ensemble of channel models (colleague's line of work; ENS_TD_* is
       its training data — the models themselves are not in this repo yet)
 ```
 
@@ -50,13 +50,16 @@ Two research programs share this machinery:
 
 1. **Per-pair Kraus models** — one model per (log_mid, predictor) pair,
    fitted to reproduce the pattern distribution.
-2. **Pairwise ensemble** — instead of one model over many features jointly
-   (alphabet would explode as 4^n), build 2-feature models and combine them;
-   `ENS_TD_*` records both each channel's marginal statistics and the exact
-   joint co-occurrences the combination must explain.
+2. **Channel ensemble** — instead of one model over many features jointly
+   (alphabet would explode as 4^n), build small-channel models and combine
+   them; `ENS_TD_*` records both each channel's marginal statistics and the
+   exact joint co-occurrences the combination must explain. The v2 spec
+   (current default) uses 3 bivariate channels plus one deliberate 4-feature
+   joint channel (alphabet 4⁴ = 256) as a reference point.
 
 **`log_mid` is the `predicted` variate in every single artifact.** Every
-encoding pairs it with one predictor feature; it appears in every filename.
+encoding pairs it with one predictor feature (the v2 ensemble's joint
+channel pairs it with several at once); it appears in every filename.
 
 ## 2. Repository map
 
@@ -67,7 +70,8 @@ encoding pairs it with one predictor feature; it appears in every filename.
 | `TrainingDistributions/read_databento_new.py` | Raw-file decoding (`dbn_to_df`) + older utilities. Also holds the pure-Python `estimate_observed_subsequence_counts` kept as the reference for its torch replacement. |
 | `TrainingDistributions/subsequence_torch.py` | Torch histogram counting (SEQ + CLS), device-agnostic (cuda→mps→cpu), integer-exact on any device. Supports both class-column conventions (§4). |
 | `TrainingDistributions/fast_ops.py` | Vectorized `sigma_W` rolling RMS and trade-sign carry — bit-identical replacements for per-row Python loops. |
-| `TrainingDistributions/ensemble_reference.py` | Colleague's `ensemble_training_data.py`, vendored **verbatim** (import-guarded). The ensemble stage imports its counting math unchanged. |
+| `TrainingDistributions/ensemble_reference.py` | Colleague's `ensemble_training_data.py` (v1), vendored **verbatim** (import-guarded). Selected by `ensemble.reference: v1`. |
+| `TrainingDistributions/ensemble_reference_2.py` | Colleague's `ensemble_training_data_2.py` (v2, the default), vendored **verbatim** (import-guarded). Adds `get_z_ts` — joint multivariate encoding — and drops the fixed-alphabet validation. The ensemble stage imports its counting math unchanged. |
 | `TrainingDistributions/cls_reference.py` | Colleague's rewritten `process_distributions.py`, vendored with four `[vendoring fix N]`-marked corrections. Source of the v2 multi-class CLS semantics. |
 | `TrainingDistributions/integrate_day_distributions.py` | Merges per-day counts into monthly aggregates (pure dict math). |
 | `TrainingDistributions/plot_distributions.py` | Chart helpers; `plotDistributions` draws in chunks of 62 → the characteristic 4 charts per trained model. |
@@ -115,7 +119,8 @@ encoding pairs it with one predictor feature; it appears in every filename.
 `log_mid_return_fwd_k` vs θ (c1/c2: θ=4.15e-5, c4: 7.5e-5); `ca{k}` = forward
 vs backward k-step sums vs θ·{1,1.5,2} (θ=7e-6). Labels ∈ {−1, 0, +1}.
 
-**`ENS_TD_{sym}_{yyyymm}_SL_{k}_CL_{cls}_{predicted}_ALL_{n}`**
+**`ENS_TD_{sym}_{yyyymm}_SL_{k}_CL_{cls}_{predicted}_ALL`** (v2, current) /
+**`…_ALL_{n}`** (v1)
 `[joint_data, component_data]`. `joint_data` (dict): `X` int16
 `[N, n_channels, k]` (the N unique joint patterns across all channels),
 `counts`, `class_counts` `[N, 3]`, `seq_probs`, `target_distributions`
@@ -123,7 +128,10 @@ vs backward k-step sums vs θ·{1,1.5,2} (θ=7e-6). Labels ∈ {−1, 0, +1}.
 `daily_sample_counts`, plus `keys/index/class_values/sequence_length/
 n_channels`. `component_data`: list of per-channel dicts of the same shape
 with `X` `[N_i, k]` and `channel_index`. Channels are timestamp-aligned by
-inner join; windows never cross day boundaries.
+inner join; windows never cross day boundaries. A channel is one bivariate
+encoding (symbols 0–15) or, in v2, optionally a joint encoding of predicted
++ several predictors (a list entry in `ensemble.predictors`; symbols
+0–4^(1+len)−1) — channel alphabets may differ within one file.
 
 **Models**: `MOD…_{n}q` = pickle `[model, sequences, emp_probs]` (full
 nn.Module + training set); `WGHTS_MOD…_{n}q.pt` = `torch.save` of
@@ -134,7 +142,9 @@ bars for pattern windows [0-62], [62-124], [124-186], remainder.
 
 **Encoding detail worth knowing**: combined symbol =
 `predicted_bin + 4 × predictor_bin` (predicted is the low digit), bins from
-expanding-quantile EWMA z-scores (α=0.05, backfilled warm-up).
+expanding-quantile EWMA z-scores (α=0.05, backfilled warm-up). The v2 joint
+channel generalizes this base-4 positional scheme: variate i (predicted
+first) contributes `bin_i × 4^i`.
 
 ## 5. Running things
 
@@ -150,8 +160,9 @@ python -m ipykernel install --user --name tsp
   `nohup python scripts/run_april.py --workers 0 --with-ensemble &`.
   It prints the complete generated YAML for both symbols before running
   (that printout is the authoritative parameter record), then per symbol:
-  distributions (10 predictors × 5 classes), ensemble tables (11 channels),
-  and the 3 Kraus trainings with per-model READY-TO-SEND bundles.
+  distributions (10 predictors × 5 classes), ensemble tables (v2: 3
+  bivariate + 1 joint channel, 5 lengths × 4 classes = 20 files), and the
+  3 Kraus trainings with per-model READY-TO-SEND bundles.
 - **Interactive**: `pipeline_control.ipynb` — every knob, detached
   launches that survive SSH drops, live monitoring, results plots.
 - **Anything ad hoc**: `python -m pipeline init-config run.yaml`, edit, then
@@ -177,8 +188,9 @@ authority chain is:
    every output. On PASS it mints `tests/baseline_manifest.json` (golden
    sha256s + environment); `--fast` verifies against the manifest in ~4 min.
 3. **Vendored-code equivalence** (`tests/verify_ensemble_reference.py`,
-   `tests/verify_cls_v2.py`): the colleague's programs, run their way from
-   the vendored copies, vs the pipeline stages — byte-compared.
+   `tests/verify_ensemble_v2.py`, `tests/verify_cls_v2.py`): the colleague's
+   programs, run their way from the vendored copies, vs the pipeline stages
+   — byte-compared.
 4. **Mechanical invariants**: `tests/test_fast_ops.py` and
    `tests/test_seq_counts_torch.py` (zero-tolerance exact equality of the
    optimized ops vs the original Python, incl. rng reproduction),
@@ -198,6 +210,7 @@ this gauntlet before merging:
 | vectorized `sigma_W` / trade signs | per-event Python lambda → one pass | bit-identical by construction + tests |
 | day-parallel runner | ~core-count× throughput | serial-vs-parallel byte-identity |
 | ensemble stage | colleague's ~6,300 decodes/month → 21 | byte-identity vs his code |
+| ensemble v2 (joint multivariate channel) | his new experiment, config-driven | byte-identity vs his v2 code |
 
 Representative timings (this Mac): original driver 3,305s vs pipeline 254s
 for 2 days × 8 predictors, identical bytes; colleague's ensemble scope
