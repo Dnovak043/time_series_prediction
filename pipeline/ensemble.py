@@ -2,11 +2,12 @@
 """
 Ensemble training-data stage: fixed-length multi-channel tables (ENS_TD_*).
 
-Integrates the colleague's ensemble_training_data.py experiment into the
-pipeline. The counting math (`prepare_ensemble_training_data`,
-`_finalize_table`) is imported VERBATIM from
-TrainingDistributions/ensemble_reference.py — this stage only replaces the
-data plumbing around it:
+Integrates the colleague's ensemble_training_data.py (v1) /
+ensemble_training_data_2.py (v2) experiment into the pipeline. The counting
+math (`prepare_ensemble_training_data`, `_finalize_table`) is imported
+VERBATIM from TrainingDistributions/ensemble_reference.py or
+ensemble_reference_2.py (selected by `ensemble.reference`) — this stage only
+replaces the data plumbing around it:
 
     colleague's script                     this stage
     ------------------------------------  -----------------------------------
@@ -24,8 +25,15 @@ change the counts. tests/verify_ensemble_reference.py (run by the user)
 byte-compares this stage's ENS_TD_* pickles against the colleague's own
 functions run his way.
 
+v2 differences (ensemble_reference_2.py): channels may be lists — one joint
+encoding of predicted + the listed features via the get_z_ts math
+(DistributionBuilder.encode_multivariate) — and
+`prepare_ensemble_training_data` has no alphabet_size parameter (channels
+have heterogeneous alphabets, e.g. 16 and 256).
+
 Output naming is the colleague's, verbatim:
-    ENS_TD_{symbol}_{yyyymm}_SL_{k}_CL_{cls}_{predicted}_ALL_{n_channels}
+    v1: ENS_TD_{symbol}_{yyyymm}_SL_{k}_CL_{cls}_{predicted}_ALL_{n_channels}
+    v2: ENS_TD_{symbol}_{yyyymm}_SL_{k}_CL_{cls}_{predicted}_ALL
 """
 from __future__ import annotations
 
@@ -44,8 +52,13 @@ def run_ensemble(cfg: RunConfig, run_id: str | None = None,
                  repo_root: Path | None = None) -> dict:
     """Build every (seq_length, class_name) ensemble table for the config's
     dates. Returns {(seq_length, class_name): output_path}."""
-    from ensemble_reference import prepare_ensemble_training_data
     from process_distributions import add_class_label
+
+    v2 = cfg.ensemble.reference == "v2"
+    if v2:
+        from ensemble_reference_2 import prepare_ensemble_training_data
+    else:
+        from ensemble_reference import prepare_ensemble_training_data
 
     root = Path(repo_root or REPO_ROOT)
     run_id = run_id or new_run_id("ensemble")
@@ -74,10 +87,17 @@ def run_ensemble(cfg: RunConfig, run_id: str | None = None,
                         message=f"{date}: {len(channels)} channels "
                                 f"({i + 1}/{len(dates)} days)")
         day_df = cache.get(date)
-        # encode_bivariate copies the frame per channel, matching the fresh
-        # featurize the colleague's get_bivariate_ts call sites see
-        daily_z.append([builder.encode_bivariate(day_df, ch)[1]
-                        for ch in channels])
+        # both encoders copy the frame per channel, matching the fresh
+        # featurize (v1) / shared-but-copied date_ts (v2) the colleague's
+        # call sites see
+        if v2:
+            daily_z.append([builder.encode_multivariate(
+                                day_df,
+                                [ch] if isinstance(ch, str) else list(ch))
+                            for ch in channels])
+        else:
+            daily_z.append([builder.encode_bivariate(day_df, ch)[1]
+                            for ch in channels])
         for cls in class_names:
             daily_cls[cls].append(add_class_label(day_df.copy(), cls))
 
@@ -85,7 +105,7 @@ def run_ensemble(cfg: RunConfig, run_id: str | None = None,
     out_dir = root / e.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     month = dates[0][:6]
-    plist = "ALL_" + str(len(channels))
+    plist = "ALL" if v2 else "ALL_" + str(len(channels))
     outputs: dict = {}
     done = len(dates)
     for cls in class_names:
@@ -95,12 +115,15 @@ def run_ensemble(cfg: RunConfig, run_id: str | None = None,
             t0 = time.time()
             progress.update(stage="count", pct=100.0 * done / steps_total,
                             message=f"SL={k} CL={cls}")
+            # v2's prepare_ensemble_training_data dropped alphabet_size
+            # (channels have heterogeneous alphabets)
+            extra = {} if v2 else {"alphabet_size": cfg.alphabet_size}
             joint_data, component_data = prepare_ensemble_training_data(
                 daily_data=daily_data,
                 sequence_length=k,
                 class_values=class_values,
-                alphabet_size=cfg.alphabet_size,
                 smoothing=e.smoothing,
+                **extra,
             )
             name = (f"ENS_TD_{cfg.data.symbol}_{month}_SL_{k}_CL_{cls}"
                     f"_{predicted}_{plist}")

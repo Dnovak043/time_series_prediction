@@ -44,15 +44,21 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `process_distributions.py` and `LearningKraus.py` are the original scripts
   (CRLF, `__main__`-guarded, optimized call sites swapped in);
   `subsequence_torch.py` (torch histograms, device-exact), `fast_ops.py`
-  (vectorized sigma_W/trade-sign, bit-identical), `ensemble_reference.py` and
-  `cls_reference.py` (colleague's programs, vendored).
+  (vectorized sigma_W/trade-sign, bit-identical), `ensemble_reference.py`,
+  `ensemble_reference_2.py` and `cls_reference.py` (colleague's programs,
+  vendored).
 - Key semantics: raw files carry BOTH symbols interleaved —
   `data.instrument_filter: true` is required for per-symbol runs (false =
   legacy mixed-stream = frozen-baseline behavior). CLS class-column order:
   legacy files are `[P(0), P(+1), P(−1)]` (list[-1] wrap); **v2**
   (`distributions.class_names` non-empty) is `[P(−1), P(0), P(+1)]` with
   colleague naming `CLS_DISTR_{sym}__{pred}-{predictor}_{month}_{cls}`. Old
-  CLS files are being scratched; v2 is canonical for new outputs.
+  CLS files are being scratched; v2 is canonical for new outputs. Ensemble:
+  `ensemble.reference` selects the vendored program — **v2** (default,
+  `ensemble_reference_2.py`) allows list channels (joint multivariate
+  encoding of predicted + listed features, `get_z_ts` math, alphabet
+  n_symbols^(1+len)) and names files `..._ALL`; v1 is bivariate-only with
+  `..._ALL_{n}` names and swept c4.
 
 ## Environments
 
@@ -78,6 +84,8 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `tests/test_seq_counts_torch.py`, `tests/test_train_all_smoke.py`.
 - `tests/verify_ensemble_reference.py`, `tests/verify_cls_v2.py` — vendored
   colleague code run his way vs pipeline stages, byte-for-byte. Both PASSED.
+- `tests/verify_ensemble_v2.py` — same, for the v2 ensemble stage vs
+  `ensemble_reference_2.py` (default scope 1 day, 20 files). NOT YET RUN.
 - `april_smoke.ipynb` — 1-day plumbing check of every April stage; expected
   counts derived from the config. Run before `april_run.ipynb`.
 
@@ -88,13 +96,14 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   suites user-run and PASSED before their merges.
 - The April experiment is ready to run on the compute box:
   `april_smoke.ipynb` first, then `april_run.ipynb` (Linux params baked in:
-  workers=0, ensemble on). Per symbol: 10 SEQ + 50 CLS-v2 + 25 ENS_TD files
-  + 3 trained Kraus models (2 result files + 4 charts each, sent per-model).
-  Training defaults = original `LearningKraus.main()` values.
+  workers=0, ensemble on). Per symbol: 10 SEQ + 50 CLS-v2 + 20 v2 ENS_TD
+  files + 3 trained Kraus models (2 result files + 4 charts each, sent
+  per-model). Training defaults = original `LearningKraus.main()` values.
+- Ensemble v2 (`ensemble_training_data_2.py`) is integrated and is the
+  default; run `tests/verify_ensemble_v2.py` (1 day) before trusting v2
+  outputs.
 - `tests/baseline_manifest.json` not yet minted — first full
   `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
-- Open question for colleague: ensemble `seq_lengths` stops at 5 while his
-  `max_seq_length = 6` sits unused — intended?
 
 ## Conventions
 
