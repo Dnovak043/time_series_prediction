@@ -50,8 +50,9 @@ def _make_widget(info: dict) -> W.Widget:
     if isinstance(value, float):
         return W.FloatText(value=value, step=None, **kw)
     if isinstance(value, list):
-        if any(isinstance(v, (list, dict)) for v in value):
-            # nested channels (ensemble v2): YAML flow syntax round-trips
+        if any(isinstance(v, (list, dict)) for v in value) or info["type"] == "str":
+            # nested channels (ensemble v2) or a list in a string-typed field
+            # (multivariate training.predictor): YAML flow syntax round-trips
             return W.Text(value=yaml.safe_dump(
                 value, default_flow_style=True).strip(), **kw)
         return W.Text(value=", ".join(str(v) for v in value), **kw)
@@ -61,7 +62,10 @@ def _make_widget(info: dict) -> W.Widget:
 def _read_widget(widget: W.Widget, template_value):
     v = widget.value
     if isinstance(template_value, list):
-        if any(isinstance(t, (list, dict)) for t in template_value):
+        if (any(isinstance(t, (list, dict)) for t in template_value)
+                or "[" in str(v)):
+            # nested entries anywhere in the text: parse as YAML so
+            # multivariate predictors can be typed into any list field
             parsed = yaml.safe_load(v if str(v).strip().startswith("[")
                                     else "[" + str(v) + "]")
             return list(parsed) if isinstance(parsed, list) else []
@@ -75,6 +79,15 @@ def _read_widget(widget: W.Widget, template_value):
         return int(v)
     if isinstance(template_value, float):
         return float(v)
+    s = str(v).strip()
+    if s.startswith("[") and s.endswith("]"):
+        # a YAML list typed into a string-typed field (training.predictor)
+        try:
+            parsed = yaml.safe_load(s)
+            if isinstance(parsed, list):
+                return parsed
+        except yaml.YAMLError:
+            pass
     return v
 
 
