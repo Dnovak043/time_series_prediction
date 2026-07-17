@@ -98,19 +98,25 @@ Hover any field in the control panel for the same help text.
 ### ensemble — fixed-length multi-channel training tables (ENS_TD_*)
 | field | default | meaning |
 |---|---|---|
+| `reference` | v2 | which vendored colleague program the stage reproduces (see below) |
 | `seq_lengths` | [1..5] | fixed window lengths; one output set per length |
-| `class_names` | [c1,c2,c4,ca2,ca4] | class definitions swept; one output set per (length, class) |
+| `class_names` | [c1,c2,ca2,ca4] | class definitions swept; one output set per (length, class); v1's driver also swept c4 |
 | `class_values` | [-1,0,1] | class column order of the output distributions |
-| `predictors` | 11 channels (incl. `log_mid` itself, `vpin`, `sigma_W`) | one bivariate encoding per channel, timestamp-aligned by inner join |
+| `predictors` | 3 bivariate + 1 joint channel | a string = one bivariate encoding vs `predicted`; a nested list (v2 only) = one joint encoding of predicted + the listed features (alphabet n_symbols^(1+len)); all timestamp-aligned by inner join |
 | `smoothing` | 0.0 | Dirichlet pseudocount for target class distributions |
 | `output_dir` | outputs/ensemble | where ENS_TD_* pickles land |
 
 Counting math is imported verbatim from `TrainingDistributions/`
-`ensemble_reference.py` (the colleague's ensemble_training_data.py, vendored
-with an import guard); the stage replaces only the plumbing — cached
-featurize + encode-once instead of ~6,300 redundant decodes per month.
-Verification: `tests/verify_ensemble_reference.py` (run it yourself)
-byte-compares the stage against the colleague's own functions run his way.
+`ensemble_reference.py` (v1, the colleague's ensemble_training_data.py) or
+`ensemble_reference_2.py` (v2, his ensemble_training_data_2.py — adds
+multivariate joint channels via `get_z_ts`, drops the fixed alphabet_size
+validation, and names files `..._ALL` instead of `..._ALL_{n}`), both
+vendored with an import guard; the stage replaces only the plumbing —
+cached featurize + encode-once instead of thousands of redundant decodes
+per month. Verification (run it yourself):
+`tests/verify_ensemble_reference.py` byte-compares the v1 stage and
+`tests/verify_ensemble_v2.py` the v2 stage (default: 1 day, 20 files)
+against the colleague's own functions run his way.
 
 ### training — SEQ_DISTR_* → trained model
 | field | default | meaning |

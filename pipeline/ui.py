@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import ipywidgets as W
+import yaml
 from IPython.display import display
 
 from . import REPO_ROOT
@@ -49,6 +50,10 @@ def _make_widget(info: dict) -> W.Widget:
     if isinstance(value, float):
         return W.FloatText(value=value, step=None, **kw)
     if isinstance(value, list):
+        if any(isinstance(v, (list, dict)) for v in value):
+            # nested channels (ensemble v2): YAML flow syntax round-trips
+            return W.Text(value=yaml.safe_dump(
+                value, default_flow_style=True).strip(), **kw)
         return W.Text(value=", ".join(str(v) for v in value), **kw)
     return W.Text(value="" if value is None else str(value), **kw)
 
@@ -56,6 +61,10 @@ def _make_widget(info: dict) -> W.Widget:
 def _read_widget(widget: W.Widget, template_value):
     v = widget.value
     if isinstance(template_value, list):
+        if any(isinstance(t, (list, dict)) for t in template_value):
+            parsed = yaml.safe_load(v if str(v).strip().startswith("[")
+                                    else "[" + str(v) + "]")
+            return list(parsed) if isinstance(parsed, list) else []
         items = [s.strip() for s in str(v).split(",") if s.strip()]
         if all(isinstance(t, int) for t in template_value) and template_value:
             return [int(s) for s in items]

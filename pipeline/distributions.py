@@ -61,6 +61,48 @@ class DistributionBuilder:
         z_series12 = (z_series12 * weights).sum(axis=1)
         return ts, z_series12.astype(int)
 
+    def encode_multivariate(self, day_df: pd.DataFrame, predictors: list):
+        """
+        Z-encode [predicted] + predictors and combine the n_symbols-ary
+        streams into one n_symbols^(1+len(predictors))-ary symbol series —
+        the math of ensemble_reference_2.get_z_ts, with alpha/n_symbols/
+        min_periods/fill_mode/bins_mode taken from the config instead of
+        the colleague's call-site constants. For a single predictor this
+        produces exactly the bivariate encoding (same weights: predicted
+        gets n_symbols^0, predictor i gets n_symbols^i).
+
+        Returns the combined int Series.
+        """
+        from process_distributions import z_encoding
+
+        e = self.encode_cfg
+        variables = [self.dist_cfg.predicted] + list(predictors)
+        if len(set(variables)) != len(variables):
+            raise ValueError(
+                f"Duplicate variables in encoding list: {variables}")
+
+        ts = day_df.copy()
+        for var in variables:
+            z_encoding(ts, var, e.n_symbols, e.alpha,
+                       min_periods=e.min_periods,
+                       fill_mode=e.fill_mode, bins_mode=e.bins_mode)
+
+        sym_cols = [var + "_sym" for var in variables]
+        Z = ts[sym_cols].astype(np.int64).to_numpy()
+        weights = e.n_symbols ** np.arange(len(sym_cols), dtype=np.int64)
+        z_joint = (Z * weights).sum(axis=1).astype(np.int64)
+        z_series = pd.Series(z_joint, index=ts.index,
+                             name="joint_sym").astype(int)
+
+        alphabet_size = e.n_symbols ** len(variables)
+        if z_series.min() < 0:
+            raise ValueError("Negative joint symbol encountered.")
+        if z_series.max() >= alphabet_size:
+            raise ValueError(
+                f"Joint symbol exceeds alphabet size: "
+                f"max={z_series.max()}, alphabet_size={alphabet_size}.")
+        return z_series
+
     # -- per-day counts -----------------------------------------------------------
     def sequence_counts(self, z_series12: pd.Series):
         """Observed subsequence counts for one day (SEQ distribution input)."""

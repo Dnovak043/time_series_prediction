@@ -140,29 +140,37 @@ class DistributionConfig:
 class EnsembleConfig:
     """Fixed-length multi-channel ensemble training tables (ENS_TD_* pickles).
 
-    Implements the colleague's ensemble_training_data.py experiment: for each
-    (sequence length, class definition), align every predictor channel's
-    bivariate encoding on identical timestamps and count joint + per-channel
-    marginal occurrences with class-conditional distributions. The counting
-    math is imported verbatim from ensemble_reference.py."""
+    Implements the colleague's ensemble_training_data experiment: for each
+    (sequence length, class definition), align every channel's encoding on
+    identical timestamps and count joint + per-channel marginal occurrences
+    with class-conditional distributions. The counting math is imported
+    verbatim from the vendored reference selected by `reference`."""
+    reference: str = _f("v2", "Which vendored colleague program the stage "
+                              "reproduces. v2 = ensemble_reference_2.py: "
+                              "channels may be lists (jointly encoded with "
+                              "the predicted feature, get_z_ts), file suffix "
+                              "'ALL'. v1 = ensemble_reference.py: bivariate "
+                              "string channels only, suffix 'ALL_{n}', fixed "
+                              "16-symbol alphabet validation.",
+                        choices=["v1", "v2"])
     seq_lengths: list = _f(lambda: [1, 2, 3, 4, 5],
                            "Fixed sequence lengths, one ENS_TD_* output set "
                            "per length. (Colleague's script: 1-5.)")
-    class_names: list = _f(lambda: ["c1", "c2", "c4", "ca2", "ca4"],
+    class_names: list = _f(lambda: ["c1", "c2", "ca2", "ca4"],
                            "Class definitions to sweep; one output set per "
-                           "class per length.")
+                           "class per length. (v2 driver default; the v1 "
+                           "driver also swept c4.)")
     class_values: list = _f(lambda: [-1, 0, 1],
                             "Ordered class labels; output distribution "
                             "columns follow this order: [P(-1), P(0), P(1)].",
                             advanced=True)
-    predictors: list = _f(lambda: ["log_mid", "tvi_n", "obi_L1", "ofi_L1_n",
-                                   "ofi_L1_n_norm", "ofi_L1_norm_n",
-                                   "ofi_L3_norm_n", "ofi_L10_norm_n",
-                                   "micro_price", "vpin", "sigma_W"],
-                          "Ensemble channels (each becomes one bivariate "
-                          "encoding vs `distributions.predicted`). The "
-                          "colleague's default deliberately includes the "
-                          "predicted feature itself as a channel.")
+    predictors: list = _f(lambda: ["ofi_L10_norm_n", "micro_price", "vpin",
+                                   ["ofi_L10_norm_n", "micro_price", "vpin"]],
+                          "Ensemble channels. A string is one bivariate "
+                          "encoding vs `distributions.predicted`; a nested "
+                          "list (v2 only) is one joint encoding of predicted "
+                          "+ the listed features, alphabet n_symbols^(1+len). "
+                          "Default = v2 driver: 3 bivariate + 1 joint channel.")
     smoothing: float = _f(0.0, "Symmetric Dirichlet pseudocount for the "
                                "target class distributions; 0 = raw empirical.",
                           advanced=True)
@@ -307,6 +315,17 @@ class RunConfig:
         if self.training.predictor not in self.distributions.predictors:
             problems.append(f"training.predictor {self.training.predictor!r} not "
                             "in distributions.predictors")
+        list_channels = [ch for ch in self.ensemble.predictors
+                         if not isinstance(ch, str)]
+        if self.ensemble.reference == "v1" and list_channels:
+            problems.append("ensemble.reference 'v1' supports only string "
+                            "(bivariate) channels; list channels need 'v2'")
+        for ch in list_channels:
+            variables = [self.distributions.predicted] + list(ch)
+            if len(set(variables)) != len(variables):
+                problems.append(f"ensemble channel {list(ch)!r}: duplicate "
+                                f"variables in joint encoding {variables} "
+                                "(get_z_ts would raise)")
         return problems
 
 
