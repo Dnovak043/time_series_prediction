@@ -154,6 +154,102 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     return path
 
 
+# ---------------------------------------------------------------------------
+# training fan-out across GPUs
+#
+# The 3-qubit bivariate model is tiny (m=16 operators of d=8, ~2k parameters),
+# so a single training occupies only a few percent of an A100 — it is
+# kernel-launch-latency bound, not compute bound. Running the 9 models
+# sequentially therefore leaves 7 of 8 GPUs idle. These helpers dispatch one
+# training per device instead.
+#
+# NOTE: this deliberately reuses tests/train_kraus_baseline.run_one (the
+# verbatim-main() harness) rather than `pipeline train-all`. train-all's
+# child (pipeline/models.py) does NOT render the 4 plotDistributions charts,
+# and those charts are part of the per-model deliverable.
+# ---------------------------------------------------------------------------
+def visible_gpu_ids(spec: str = "auto") -> list:
+    """GPU ids to schedule on — the pipeline's own discovery, so this and
+    `pipeline train-all` agree on what exists. [] = no CUDA (schedule CPU)."""
+    from pipeline.parallel import visible_gpus
+    return visible_gpus(spec)
+
+
+def _train_one(job: dict) -> dict:
+    """One (symbol, predictor) training pinned to one device.
+
+    Module-level on purpose: ProcessPoolExecutor's spawn context imports the
+    worker by qualified name, which a function defined in a notebook cell
+    cannot satisfy.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from train_kraus_baseline import run_one
+
+    cfg = RunConfig.load(job["config"])
+    t = cfg.training
+    out_dir = Path(job["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    r = run_one(job["predictor"], Path(job["distr_dir"]), out_dir, t.epochs,
+                None if t.seed < 0 else t.seed,
+                symbol=job["symbol"], n_qubits=t.n_qubits,
+                m=cfg.alphabet_size,
+                max_seq_len=t.max_seq_len, min_seq_prob=t.min_seq_prob,
+                batch_size=t.batch_size, lr=t.lr,
+                optimizer_name=t.optimizer, loss_kind=t.loss_kind,
+                learn_rho0=t.learn_rho0, device=job["device"])
+    # tag the result so out-of-order completions stay identifiable
+    r["symbol"] = job["symbol"]
+    r["predictor"] = job["predictor"]
+    r["device"] = job["device"]
+    return r
+
+
+def build_training_jobs(configs: dict, gpus: list | None = None) -> list:
+    """One job per (symbol, training predictor), round-robin across GPUs.
+
+    `configs` maps symbol -> generated config path; the training parameters
+    are read back from that config, so the jobs stay config-authoritative.
+    """
+    gpus = visible_gpu_ids() if gpus is None else gpus
+    jobs = []
+    for symbol, cfg_path in configs.items():
+        cfg = RunConfig.load(cfg_path)
+        for predictor in cfg.training.predictors:
+            device = f"cuda:{gpus[len(jobs) % len(gpus)]}" if gpus else "cpu"
+            jobs.append({
+                "symbol": symbol,
+                "predictor": predictor,
+                "config": str(cfg_path),
+                "distr_dir": str(ROOT / "outputs" / "april" / symbol),
+                "out_dir": str(ROOT / "outputs" / "april" / symbol / "models"),
+                "device": device,
+            })
+    return jobs
+
+
+def run_training_jobs(jobs: list, max_parallel: int = 0):
+    """Yield each finished training as it completes (completion order, not
+    submission order). max_parallel: 0 = one per distinct device (i.e. one
+    per GPU), 1 = sequential (the original behavior), N = N at once."""
+    if max_parallel <= 0:
+        max_parallel = len({j["device"] for j in jobs})
+    max_parallel = max(1, min(max_parallel, len(jobs)))
+
+    if max_parallel == 1:
+        for job in jobs:
+            yield _train_one(job)
+        return
+
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    with ProcessPoolExecutor(max_workers=max_parallel,
+                             mp_context=mp.get_context("spawn")) as ex:
+        futures = [ex.submit(_train_one, j) for j in jobs]
+        for fut in as_completed(futures):
+            yield fut.result()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--symbols", nargs="+", default=SYMBOLS)
@@ -173,6 +269,12 @@ def main():
                          "(repeatable), e.g. --asset-path IBM=data/IBM. "
                          "Default: configs/default.yaml's data.asset_paths "
                          "catalog, auto-discovered in/near the repo.")
+    ap.add_argument("--train-parallel", type=int, default=0,
+                    help="concurrent trainings in stage 3: 0 = auto (one per "
+                         "visible GPU), 1 = sequential (previous behavior), "
+                         "N = exactly N. Each 3-qubit model uses only a few "
+                         "percent of an A100, so N above the GPU count is "
+                         "reasonable.")
     ap.add_argument("--with-ensemble", action="store_true",
                     help="also build the fixed-length ENS_TD_* ensemble "
                          "tables per symbol (25 files each; colleague's "
@@ -241,43 +343,41 @@ def main():
     if args.only_distributions:
         return
 
-    # ---- stage 3: 6 trainings, send-as-you-go -----------------------------------
-    from train_kraus_baseline import run_one
-
+    # ---- stage 3: trainings, fanned across GPUs, send-as-you-go -----------------
     summary_path = ROOT / "outputs" / "april" / "april_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
     results = []
-    combos = [(s, p) for s in args.symbols
-              for p in RunConfig.load(configs[s]).training.predictors]
-    for i, (symbol, predictor) in enumerate(combos, 1):
-        distr_dir = ROOT / "outputs" / "april" / symbol
-        out_dir = distr_dir / "models"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        t = RunConfig.load(configs[symbol]).training
-        print(f"\n=== MODEL {i}/{len(combos)}: {symbol} x {predictor} "
-              f"(epochs={t.epochs}, {t.n_qubits}q, batch={t.batch_size}, "
-              f"lr={t.lr}, {t.optimizer}/{t.loss_kind}, "
-              f"seed={'unseeded' if t.seed < 0 else t.seed}) ===")
-        r = run_one(predictor, distr_dir, out_dir, t.epochs,
-                    None if t.seed < 0 else t.seed,
-                    symbol=symbol, n_qubits=t.n_qubits,
-                    m=RunConfig.load(configs[symbol]).alphabet_size,
-                    max_seq_len=t.max_seq_len, min_seq_prob=t.min_seq_prob,
-                    batch_size=t.batch_size, lr=t.lr,
-                    optimizer_name=t.optimizer, loss_kind=t.loss_kind,
-                    learn_rho0=t.learn_rho0, device=t.device)
-        results.append(r)
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(json.dumps(results, indent=1))
 
-        print(f"\n>>> MODEL {i}/{len(combos)} COMPLETE — READY TO SEND:")
+    gpus = visible_gpu_ids()
+    train_configs = {s: configs[s] for s in args.symbols}
+    jobs = build_training_jobs(train_configs, gpus)
+    n_par = (args.train_parallel if args.train_parallel > 0
+             else (len(gpus) or 1))
+    n_par = max(1, min(n_par, len(jobs)))
+
+    t0cfg = RunConfig.load(configs[args.symbols[0]]).training
+    print(f"\n=== {len(jobs)} models | {len(gpus) or 'no'} GPU(s) | "
+          f"{n_par} at a time | epochs={t0cfg.epochs}, {t0cfg.n_qubits}q, "
+          f"batch={t0cfg.batch_size}, lr={t0cfg.lr}, "
+          f"{t0cfg.optimizer}/{t0cfg.loss_kind}, "
+          f"seed={'unseeded' if t0cfg.seed < 0 else t0cfg.seed} ===")
+    for j in jobs:
+        print(f"    {j['symbol']:6s} x {j['predictor']:16s} -> {j['device']}")
+
+    for i, r in enumerate(run_training_jobs(jobs, n_par), 1):
+        results.append(r)
+        summary_path.write_text(json.dumps(results, indent=1))
+        print(f"\n>>> MODEL {i}/{len(jobs)} COMPLETE — "
+              f"{r['symbol']} x {r['predictor']} on {r['device']} — "
+              f"READY TO SEND:")
         print(f"    result file 1: {r['model_pickle']}")
         print(f"    result file 2: {r['weights']}")
-        for j, png in enumerate(r["plots"], 1):
-            print(f"    image {j}:       {png}")
+        for j2, png in enumerate(r["plots"], 1):
+            print(f"    image {j2}:       {png}")
         print(f"    cost={r['final_cost_weighted_mse']:.3e}  "
               f"({r['train_seconds']:.0f}s)")
 
-    print(f"\nAll {len(combos)} models done. Summary: {summary_path}")
+    print(f"\nAll {len(jobs)} models done. Summary: {summary_path}")
 
 
 if __name__ == "__main__":
