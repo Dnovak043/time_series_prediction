@@ -18,7 +18,7 @@ import pickle
 from pathlib import Path
 
 from . import REPO_ROOT
-from .config import RunConfig
+from .config import RunConfig, predictor_key
 
 REGISTRY: dict[str, callable] = {}
 
@@ -84,6 +84,13 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
             f"kraus: {len(sequences)} sequences from {seq_path.name}, "
             f"device={device}"))
 
+    # seeding: training.seed >= 0 makes the run reproducible; -1 is the
+    # original main() behavior (unseeded, results vary run to run). This was
+    # previously declared in the config but never applied here.
+    if t.seed >= 0:
+        import torch
+        torch.manual_seed(t.seed)
+
     model0 = None
     if t.continue_from:
         model0, meta = lk.load_model_weights(
@@ -94,6 +101,8 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
             progress.update(stage="training", pct=100.0 * ep / total,
                             message=f"epoch {ep}/{total} loss {loss:.3e}")
 
+    import time as _time
+    _t0 = _time.time()
     model = lk.train(
         sequences, emp_probs, t.max_seq_len,
         m, t.n_qubits,
@@ -102,12 +111,15 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         epochs=t.epochs,
         learn_rho0=t.learn_rho0,
         model=model0,
+        num_workers=t.num_workers,
         device=device,
         optimizer_name=t.optimizer,
         loss_kind=t.loss_kind,
         length_mixture=t.length_mixture,
         on_epoch=on_epoch,
     )
+
+    train_seconds = _time.time() - _t0
 
     # evaluation + persistence (same artifacts as the original script)
     p_model = lk.predict_probs(model, sequences, batch_size=2048)
@@ -133,6 +145,38 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
         wghts_path = model_dir / f"WGHTS_{base}_{t.n_qubits}q.pt"
 
+    # charts: LearningKraus.plotDistributions draws the first `plot_entries`
+    # entries in chunks of 62 and calls plt.show() per chunk -> 4 figures for
+    # the default 200. Interactively those are 4 windows; here plt.show is
+    # intercepted so each becomes its own PNG. Ported from the April harness
+    # so this is the single trainer that produces the full per-model bundle.
+    fig_paths: list[str] = []
+    if t.plot_entries > 0:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig_base = model_dir / (
+            f"{cfg.data.symbol}_{cfg.data.dates[0][:6]}_"
+            f"{cfg.distributions.predicted}-{predictor_key(t.predictor)}_"
+            f"{t.n_qubits}q")
+        n = t.plot_entries
+
+        def _save_instead_of_show(*a, **k):
+            fig_paths.append(f"{fig_base}_{len(fig_paths) + 1}.png")
+            plt.savefig(fig_paths[-1], dpi=120, bbox_inches="tight")
+            plt.close()
+
+        orig_show = plt.show
+        plt.show = _save_instead_of_show
+        try:
+            lk.plotDistributions(emp_probs[:n], p_model[:n], sequences[:n],
+                                 f"{base} Cost={total_loss}",
+                                 "Target", "Model", c1="blue", c2="red")
+        finally:
+            plt.show = orig_show
+            plt.close("all")
+
     with open(mod_path, "wb") as fh:
         pickle.dump([model, sequences, emp_probs], fh)
     lk.save_model_weights(
@@ -144,7 +188,10 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
 
     result = {"model_file": str(mod_path), "weights_file": str(wghts_path),
               "loss": total_loss, "n_sequences": len(sequences),
-              "device": device}
+              "device": device, "plots": fig_paths,
+              "symbol": cfg.data.symbol,
+              "predictor": predictor_key(t.predictor),
+              "train_seconds": round(train_seconds, 1)}
     if progress:
         progress.done(f"loss {total_loss:.3e} -> {wghts_path.name}")
     return result

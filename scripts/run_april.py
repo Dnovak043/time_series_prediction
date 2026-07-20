@@ -19,8 +19,9 @@ Stages (each skippable):
        single-symbol directory like data/IBM (already just that ticker).
   2. distribution runs (featurize -> encode -> SEQ/CLS pickles), one per
      symbol, day-parallel -> outputs/april/{SYMBOL}/
-  3. nine trainings via the verbatim-main() harness
-     (tests/train_kraus_baseline.run_one) -> outputs/april/{SYMBOL}/models/
+  3. nine trainings via the pipeline's registered trainer (pipeline.models,
+     the same path as `python -m pipeline train`), fanned one per GPU
+     -> outputs/april/{SYMBOL}/models/
      After EACH model a "READY TO SEND" block lists exactly the 2 result
      files + 4 images for that model, so results can be forwarded as they
      complete. Progress persists in outputs/april/april_summary.json.
@@ -56,7 +57,7 @@ import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 
 import pipeline  # noqa: E402,F401
-from pipeline.config import RunConfig  # noqa: E402
+from pipeline.config import RunConfig, predictor_key  # noqa: E402
 
 SYMBOLS = ["NVDA", "INTC", "IBM"]
 PREDICTED = "log_mid"   # features[0] in BOTH colleague files: every output
@@ -163,10 +164,10 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
 # sequentially therefore leaves 7 of 8 GPUs idle. These helpers dispatch one
 # training per device instead.
 #
-# NOTE: this deliberately reuses tests/train_kraus_baseline.run_one (the
-# verbatim-main() harness) rather than `pipeline train-all`. train-all's
-# child (pipeline/models.py) does NOT render the 4 plotDistributions charts,
-# and those charts are part of the per-model deliverable.
+# The trainer is pipeline.models (the model registry) — the same code path
+# as `python -m pipeline train`. Only the cross-symbol scheduling lives here,
+# because `pipeline train-all` sweeps predictors within ONE config and this
+# experiment needs 3 symbols x 3 predictors spread over 8 GPUs.
 # ---------------------------------------------------------------------------
 def visible_gpu_ids(spec: str = "auto") -> list:
     """GPU ids to schedule on — the pipeline's own discovery, so this and
@@ -178,29 +179,23 @@ def visible_gpu_ids(spec: str = "auto") -> list:
 def _train_one(job: dict) -> dict:
     """One (symbol, predictor) training pinned to one device.
 
+    Runs the registered pipeline trainer (pipeline.models, via the model
+    registry) — not a test harness. Everything that used to be exclusive to
+    tests/train_kraus_baseline.py (the 4 plotDistributions charts, seeding,
+    the dataloader worker count) now lives in pipeline/models.py, so this is
+    a plain `pipeline train` with training.predictor/device overridden.
+
     Module-level on purpose: ProcessPoolExecutor's spawn context imports the
-    worker by qualified name, which a function defined in a notebook cell
-    cannot satisfy.
+    worker by qualified name, which a notebook-cell closure cannot satisfy.
     """
     import matplotlib
     matplotlib.use("Agg")
-    from train_kraus_baseline import run_one
+    from pipeline.models import train_model
 
     cfg = RunConfig.load(job["config"])
-    t = cfg.training
-    out_dir = Path(job["out_dir"])
-    out_dir.mkdir(parents=True, exist_ok=True)
-    r = run_one(job["predictor"], Path(job["distr_dir"]), out_dir, t.epochs,
-                None if t.seed < 0 else t.seed,
-                symbol=job["symbol"], n_qubits=t.n_qubits,
-                m=cfg.alphabet_size,
-                max_seq_len=t.max_seq_len, min_seq_prob=t.min_seq_prob,
-                batch_size=t.batch_size, lr=t.lr,
-                optimizer_name=t.optimizer, loss_kind=t.loss_kind,
-                learn_rho0=t.learn_rho0, device=job["device"])
-    # tag the result so out-of-order completions stay identifiable
-    r["symbol"] = job["symbol"]
-    r["predictor"] = job["predictor"]
+    cfg.training.predictor = job["predictor"]
+    cfg.training.device = job["device"]
+    r = train_model(cfg, run_id=job["run_id"], repo_root=ROOT)
     r["device"] = job["device"]
     return r
 
@@ -221,9 +216,10 @@ def build_training_jobs(configs: dict, gpus: list | None = None) -> list:
                 "symbol": symbol,
                 "predictor": predictor,
                 "config": str(cfg_path),
-                "distr_dir": str(ROOT / "outputs" / "april" / symbol),
-                "out_dir": str(ROOT / "outputs" / "april" / symbol / "models"),
                 "device": device,
+                # own run dir per model: progress.json + config.yaml, so each
+                # training is watchable individually via `pipeline status`
+                "run_id": f"april-train-{symbol}-{predictor_key(predictor)}",
             })
     return jobs
 
@@ -370,12 +366,11 @@ def main():
         print(f"\n>>> MODEL {i}/{len(jobs)} COMPLETE — "
               f"{r['symbol']} x {r['predictor']} on {r['device']} — "
               f"READY TO SEND:")
-        print(f"    result file 1: {r['model_pickle']}")
-        print(f"    result file 2: {r['weights']}")
+        print(f"    result file 1: {r['model_file']}")
+        print(f"    result file 2: {r['weights_file']}")
         for j2, png in enumerate(r["plots"], 1):
             print(f"    image {j2}:       {png}")
-        print(f"    cost={r['final_cost_weighted_mse']:.3e}  "
-              f"({r['train_seconds']:.0f}s)")
+        print(f"    cost={r['loss']:.3e}  ({r['train_seconds']:.0f}s)")
 
     print(f"\nAll {len(jobs)} models done. Summary: {summary_path}")
 

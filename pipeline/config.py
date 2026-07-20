@@ -246,8 +246,21 @@ class TrainingConfig:
     max_seq_len: int = _f(6, "Drop training sequences longer than this.")
     min_seq_prob: float = _f(0.0, "Drop training sequences with empirical "
                                   "probability below this.", advanced=True)
+    num_workers: int = _f(0, "DataLoader worker processes. 0 = load in the "
+                             "training process (no IPC overhead, and no "
+                             "nested multiprocessing when trainings are "
+                             "themselves fanned across GPUs). Affects speed "
+                             "only, never results: shuffling is done by the "
+                             "sampler in the parent, workers only fetch.",
+                          advanced=True)
+    plot_entries: int = _f(200, "How many sequences to chart with "
+                                "plotDistributions after training. It draws "
+                                "in chunks of 62, so 200 -> the "
+                                "characteristic 4 PNGs per model. 0 = skip "
+                                "charting.")
     device: str = _f("auto", "Compute device. auto = cuda if available else cpu "
-                             "(mps is opt-in: complex-tensor support is limited).",
+                             "(mps is opt-in: complex-tensor support is limited). "
+                             "An explicit 'cuda:N' pins one training to one GPU.",
                      choices=["auto", "cuda", "cpu", "mps"])
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)

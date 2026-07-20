@@ -138,6 +138,16 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   catalog (`--asset-path SYMBOL=DIR` / `ASSET_PATH_OVERRIDES` to override).
   `data/AAPL` and `data/IBM` do not exist locally yet — config validation
   stays cheap and does not check the directories.
+- Training consolidated into `pipeline/models.py` (PR #10): the April run
+  no longer imports `tests/train_kraus_baseline.run_one`. The 4
+  plotDistributions charts (`training.plot_entries`), `training.seed`
+  (previously declared but never applied), and `training.num_workers` now
+  live in the registered trainer. **Model files are now `MOD_*` /
+  `WGHTS_MOD_*`** — the harness's `MODR_*` (an off-by-one, `title[8:]` on
+  the 10-char `SEQ_DISTR_` prefix, "original quirk kept") was retired by
+  the user's decision. `train_kraus_baseline.py` stays as a standalone
+  independent cross-check; a byte-comparison against it must account for
+  that naming difference.
 - `tests/baseline_manifest.json` not yet minted — first full
   `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
 
