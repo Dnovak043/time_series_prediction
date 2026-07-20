@@ -317,19 +317,19 @@ def test_device_cuda_index_loads_in_control_panel():
     assert info["free_form"], "training.device must stay free_form"
     assert info["choices"] == ["auto", "cuda", "cpu", "mps"]
 
-    # presets remain a dropdown selection; the textbox is greyed out
+    # presets remain a dropdown selection; the second chooser is greyed out
     w_preset = _make_widget(info)
     assert isinstance(w_preset, ChoiceOrCustom)
-    assert w_preset.value == "auto" and w_preset._txt.disabled
+    assert w_preset.value == "auto" and w_preset._custom.disabled
 
     # an indexed device is representable, not a construction error
     w_custom = _make_widget(dict(info, value="cuda:3"))
     assert w_custom.value == "cuda:3"
     assert _read_widget(w_custom, "auto") == "cuda:3"      # collect() path
     w_custom.value = "cpu"                                  # apply() path
-    assert w_custom.value == "cpu" and w_custom._txt.disabled
+    assert w_custom.value == "cpu" and w_custom._custom.disabled
     w_custom.value = "cuda:7"
-    assert w_custom.value == "cuda:7" and not w_custom._txt.disabled
+    assert w_custom.value == "cuda:7" and not w_custom._custom.disabled
 
     # end to end: save what the fan-out saves, reopen it in the panel
     cfg = RunConfig()
@@ -341,6 +341,78 @@ def test_device_cuda_index_loads_in_control_panel():
         panel = ControlPanel(path, repo_root=Path(d))
         assert panel.collect().training.device == "cuda:3"
     print("  PASS device 'cuda:N' round-trips through the control panel")
+
+
+def test_device_chooser_offers_only_real_devices():
+    """The device chooser must be a dropdown of devices that exist here, so
+    an invalid device cannot be entered through the panel at all — and it
+    must still represent a value from another machine, since configs are
+    portable between the Mac and the compute box.
+    """
+    import ipywidgets as W
+    import matplotlib
+    matplotlib.use("Agg")
+    from pipeline.config import field_info
+    from pipeline.models import available_devices
+    from pipeline.ui import _make_widget
+
+    detected = available_devices()
+    assert "cpu" in detected, detected
+    for d in detected:
+        assert d == "cpu" or d.startswith(("cuda", "mps")), d
+    # indexed entries are well formed and pass validation
+    for d in detected:
+        cfg = RunConfig()
+        cfg.training.device = d
+        assert cfg.validate() == [], f"{d}: {cfg.validate()}"
+
+    info = [i for i in field_info(RunConfig().training)
+            if i["name"] == "device"][0]
+    assert info["options_provider"] == "devices"
+
+    # second chooser is a Dropdown (not free text) -> no invalid input path
+    w = _make_widget(info)
+    assert isinstance(w._custom, W.Dropdown), type(w._custom).__name__
+    # it never re-offers what the preset dropdown already has
+    assert not set(w._custom.options) & set(info["choices"])
+
+    # a device absent from this machine still round-trips exactly
+    foreign = "cuda:3"
+    w2 = _make_widget(dict(info, value=foreign))
+    assert foreign in w2._custom.options, w2._custom.options
+    assert w2.value == foreign
+    with tempfile.TemporaryDirectory() as d:
+        cfg = RunConfig()
+        cfg.data.dates = ["20250401"]
+        cfg.training.device = foreign
+        cfg2 = RunConfig.load(cfg.save(Path(d) / "c.yaml"))
+        assert cfg2.training.device == foreign
+    print("  PASS device chooser lists real devices, keeps foreign values")
+
+
+def test_panel_save_reports_invalid_config():
+    """Saving must not silently persist a config that fails validation."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from pipeline.ui import ControlPanel
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = RunConfig()
+        cfg.data.dates = ["20250401"]
+        path = cfg.save(Path(d) / "config.yaml")
+        panel = ControlPanel(path, repo_root=Path(d))
+
+        panel.save()
+        assert "problem" not in panel.w_status.value, panel.w_status.value
+
+        # force an invalid value the way a hand-edited YAML could
+        panel._widgets[("data", "dates")].value = "2025-04-01"
+        panel.save()
+        status = panel.w_status.value
+        assert "problem" in status and "yyyymmdd" in status, status
+        # the edit is still written rather than silently dropped
+        assert RunConfig.load(path).data.dates == ["2025-04-01"]
+    print("  PASS panel save surfaces validation problems")
 
 
 def test_choices_are_validated():
@@ -395,6 +467,8 @@ if __name__ == "__main__":
                test_training_jobs_handle_multivariate_predictors,
                test_stage3_listing_format_sites_use_label,
                test_device_cuda_index_loads_in_control_panel,
+               test_device_chooser_offers_only_real_devices,
+               test_panel_save_reports_invalid_config,
                test_choices_are_validated]:
         fn()
     print("ALL UNIT TESTS PASSED")

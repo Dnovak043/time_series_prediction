@@ -30,6 +30,32 @@ def register_model(name: str):
     return deco
 
 
+def available_devices() -> list[str]:
+    """Devices this machine can actually train on, most specific last:
+    ['cpu', 'cuda', 'cuda:0', ...] or ['cpu', 'mps', 'mps:0'].
+
+    Used by the control panel so the device chooser only offers what exists
+    here. CUDA enumeration is delegated to pipeline.parallel.visible_gpus so
+    this and `train-all` agree on the device list (and both respect an
+    externally set CUDA_VISIBLE_DEVICES). Never raises: a missing or broken
+    torch degrades to CPU-only rather than breaking the panel.
+    """
+    devices = ["cpu"]
+    try:
+        import torch
+
+        from .parallel import visible_gpus
+        if torch.cuda.is_available():
+            devices.append("cuda")
+            devices += [f"cuda:{i}" for i in visible_gpus("auto")]
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            devices += ["mps", "mps:0"]
+    except Exception:      # torch missing/broken (or no backends attr)
+        pass
+    return devices
+
+
 def resolve_device(requested: str) -> str:
     if requested != "auto":
         return requested

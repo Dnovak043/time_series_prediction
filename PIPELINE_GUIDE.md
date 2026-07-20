@@ -171,12 +171,36 @@ notebook's `PREDICTED` (shadowed by `run_april.py`'s module constant).
 `validate()` rejects any value outside the set, and the panel renders a plain
 dropdown. A field declared `choices=[...], free_form=True` treats those as
 *presets* — other values are legal and get their own validation rule, and the
-panel renders `ChoiceOrCustom`: the preset dropdown plus a specification
-textbox that activates on the `custom…` entry. `training.device` is the one
-such field today, because the GPU fan-out writes `cuda:3` and that value has
-to survive save → load → panel. Before this, an out-of-set value passed
-`validate()` silently and then raised `TraitError` at widget construction,
-making every per-model config from a real run unopenable.
+panel renders `ChoiceOrCustom`: the preset dropdown plus a second chooser that
+activates on the `custom…` entry.
+
+Adding `options_provider="<name>"` makes that second chooser a **dropdown of
+real values** rather than a text box; the provider is a callable registered in
+`pipeline/ui.py`'s `_OPTION_PROVIDERS`, which keeps `pipeline/config.py` free
+of torch and UI imports.
+
+`training.device` is the one such field today: presets `auto/cuda/cpu/mps`,
+plus `options_provider="devices"` → `pipeline.models.available_devices()`,
+which lists the accelerators actually present (`cuda:0…N` via the same
+`visible_gpus` the fan-out and `train-all` use, or `mps:0`, always `cpu`).
+This exists because the GPU fan-out writes `cuda:3` into every per-model
+`config.yaml`; before it, such a value passed `validate()` silently and then
+raised `TraitError` at widget construction, making exactly the configs a real
+run produces unopenable.
+
+Two consequences worth knowing:
+
+- **Only real devices are offerable**, so the panel cannot produce an invalid
+  device at all — an improvement over validating free text after the fact.
+- **Configs are portable**, so a value the loaded config already names is
+  always included even when absent locally. Opening the compute box's
+  `cuda:3` config on the Mac shows `cuda:3` alongside the local `mps:0`, and
+  saving round-trips it unchanged. Availability is deliberately *not* a
+  `validate()` check for the same reason.
+
+`ControlPanel.save()` also validates on the way out: the file is still
+written (edits are never lost) but any problems are reported in the status
+bar rather than passing unnoticed into a run.
 
 **Deliberate non-knobs** (fixed because varying them would break an output
 contract, not because they were overlooked):

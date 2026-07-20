@@ -47,16 +47,25 @@ def predictor_key(predictor) -> str:
     return "+".join(predictor)
 
 
-def _f(default, help="", choices=None, advanced=False, free_form=False, **kw):
+def _f(default, help="", choices=None, advanced=False, free_form=False,
+       options_provider=None, **kw):
     """free_form=True: `choices` are the common presets, but other values are
     legal too (validated by RunConfig.validate). The control panel renders
-    such a field as a dropdown *plus* a specification textbox instead of a
-    closed dropdown, so e.g. training.device='cuda:3' is representable."""
+    such a field as the preset dropdown *plus* a second chooser, so e.g.
+    training.device='cuda:3' is representable.
+
+    options_provider: name of a provider registered in pipeline.ui that
+    enumerates the extra values for that second chooser (e.g. 'devices' ->
+    the accelerators present on this machine). With a provider the second
+    chooser is a dropdown, so only real values can be picked; without one it
+    falls back to a free-text box."""
     md = {"help": help}
     if choices:
         md["choices"] = choices
     if free_form:
         md["free_form"] = True
+    if options_provider:
+        md["options_provider"] = options_provider
     if advanced:
         md["advanced"] = True
     if callable(default):
@@ -304,8 +313,13 @@ class TrainingConfig:
                              "Besides these presets an explicit 'cuda:N' pins "
                              "one training to one GPU — that is how the April "
                              "stage-3 fan-out schedules, and such values are "
-                             "written into each per-model config.yaml.",
-                     choices=["auto", "cuda", "cpu", "mps"], free_form=True)
+                             "written into each per-model config.yaml. The "
+                             "panel offers only the accelerators present on "
+                             "this machine, plus whatever the loaded config "
+                             "already names (configs are portable between the "
+                             "Mac and the compute box).",
+                     choices=["auto", "cuda", "cpu", "mps"], free_form=True,
+                     options_provider="devices")
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
@@ -488,6 +502,7 @@ def field_info(stage_obj) -> list[dict[str, Any]]:
             "help": f.metadata.get("help", ""),
             "choices": f.metadata.get("choices"),
             "free_form": f.metadata.get("free_form", False),
+            "options_provider": f.metadata.get("options_provider"),
             "advanced": f.metadata.get("advanced", False),
         })
     return out

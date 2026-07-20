@@ -37,13 +37,32 @@ _LAYOUT = W.Layout(width="440px")
 # ---------------------------------------------------------------------------
 # widget <-> field mapping
 # ---------------------------------------------------------------------------
-class ChoiceOrCustom(W.HBox):
-    """Dropdown of the common presets + a specification textbox for values
-    outside them (a `free_form` choices field, e.g. training.device='cuda:3'
-    written by the April GPU fan-out).
+def _device_options() -> list:
+    """Accelerators present on this machine, for the device chooser."""
+    from .models import available_devices
+    return available_devices()
 
-    Selecting the CUSTOM sentinel enables the textbox and takes its value;
-    any other selection takes the dropdown's and greys the textbox out.
+
+# name -> callable enumerating the extra values a free_form field may take.
+# Declared in the schema as `options_provider="devices"`; keeping the
+# callable here leaves pipeline.config free of torch/UI imports.
+_OPTION_PROVIDERS = {"devices": _device_options}
+
+
+class ChoiceOrCustom(W.HBox):
+    """Preset dropdown + a second chooser for values outside the presets
+    (a `free_form` choices field, e.g. training.device='cuda:3' written by
+    the April GPU fan-out).
+
+    With an options provider the second chooser is a **dropdown of the
+    values that actually exist on this machine**, so nothing invalid can be
+    entered. Without one it degrades to a free-text box.
+
+    Configs are portable, so a value the loaded config already names is
+    always offered even when absent here — otherwise opening the compute
+    box's `cuda:3` config on a CPU-only Mac would be the very TraitError
+    this widget exists to prevent.
+
     Exposes a single `.value` (get and set) so the rest of this module —
     `_read_widget`, `collect`, `apply` — treats it like any other widget.
     """
@@ -51,50 +70,77 @@ class ChoiceOrCustom(W.HBox):
     CUSTOM = "custom…"
 
     def __init__(self, choices, value, description="", style=None,
-                 layout=None, tooltip=""):
-        options = list(choices) + [self.CUSTOM]
-        known = value in choices
+                 layout=None, tooltip="", custom_options=None):
+        self._choices = list(choices)
+        value = "" if value is None else str(value)
+        known = value in self._choices
+
         self._dd = W.Dropdown(
-            options=options, value=value if known else self.CUSTOM,
+            options=self._choices + [self.CUSTOM],
+            value=value if known else self.CUSTOM,
             description=description, style=style or _STYLE,
-            layout=W.Layout(width="300px"), tooltip=tooltip)
-        self._txt = W.Text(
-            value="" if known else str(value), placeholder="e.g. cuda:0",
-            disabled=known, layout=W.Layout(width="140px"))
+            layout=W.Layout(width="290px"), tooltip=tooltip)
+
+        if custom_options is None:
+            self._custom = W.Text(value="" if known else value,
+                                  placeholder="e.g. cuda:0", disabled=known,
+                                  layout=W.Layout(width="150px"))
+        else:
+            self._custom = W.Dropdown(
+                options=self._custom_options(custom_options, value, known),
+                value=None if known else value, disabled=known,
+                layout=W.Layout(width="150px"))
         self._dd.observe(self._on_choice, names="value")
-        super().__init__([self._dd, self._txt])
+        super().__init__([self._dd, self._custom],
+                         layout=layout or W.Layout(width="450px"))
+
+    def _custom_options(self, provided, value, known) -> list:
+        """Detected options, plus the config's own value when this machine
+        does not have it, so every persisted config stays representable."""
+        options = [o for o in provided if o not in self._choices]
+        if not known and value and value not in options:
+            options = [value] + options
+        return options
 
     def _on_choice(self, _change):
-        self._txt.disabled = self._dd.value != self.CUSTOM
+        self._custom.disabled = self._dd.value != self.CUSTOM
 
     @property
     def value(self):
-        if self._dd.value == self.CUSTOM:
-            return self._txt.value.strip()
-        return self._dd.value
+        if self._dd.value != self.CUSTOM:
+            return self._dd.value
+        v = self._custom.value
+        return "" if v is None else str(v).strip()
 
     @value.setter
     def value(self, v):
         v = "" if v is None else str(v)
-        if v in [o for o in self._dd.options if o != self.CUSTOM]:
+        if v in self._choices:
             self._dd.value = v
-            self._txt.value = ""
-            self._txt.disabled = True
-        else:
-            self._dd.value = self.CUSTOM
-            self._txt.value = v
-            self._txt.disabled = False
+            self._custom.disabled = True
+            return
+        if isinstance(self._custom, W.Dropdown):
+            if v not in self._custom.options:
+                # a value from another machine: widen the options so the
+                # assignment cannot raise TraitError
+                self._custom.options = [v] + list(self._custom.options)
+        self._custom.value = v
+        self._dd.value = self.CUSTOM
+        self._custom.disabled = False
 
 
 def _make_widget(info: dict) -> W.Widget:
     name, value = info["name"], info["value"]
     kw = dict(description=name, style=_STYLE, layout=_LAYOUT,
               tooltip=info["help"])
-    if info["choices"] and info.get("free_form"):
+    if info["choices"] and info["free_form"]:
         # presets stay one click away, but out-of-set values (cuda:3) are
         # representable instead of raising TraitError on construction
+        provider = _OPTION_PROVIDERS.get(info["options_provider"])
         return ChoiceOrCustom(info["choices"], value, description=name,
-                              style=_STYLE, tooltip=info["help"])
+                              style=_STYLE, layout=_LAYOUT,
+                              tooltip=info["help"],
+                              custom_options=provider() if provider else None)
     if info["choices"]:
         return W.Dropdown(options=info["choices"], value=value, **kw)
     if isinstance(value, bool):
@@ -256,9 +302,19 @@ class ControlPanel:
             path = Path(self.w_path.value)
             if not path.is_absolute():
                 path = self.root / path
+            # validate on the way out: saving is how a config reaches a run,
+            # and silently persisting an invalid one defers the failure to
+            # mid-run. The file is still written (so edits are never lost),
+            # but the problems are reported instead of passing unnoticed.
+            problems = cfg.validate()
             cfg.save(path)
             self.config_path = path
-            self._flash(f"saved {path.name}")
+            if problems:
+                self._flash(f"saved {path.name} with "
+                            f"{len(problems)} problem(s): "
+                            + "; ".join(problems), ok=False)
+            else:
+                self._flash(f"saved {path.name}")
         except Exception as e:  # noqa: BLE001 - surfaced in the UI
             self._flash(f"save failed: {e}", ok=False)
 
