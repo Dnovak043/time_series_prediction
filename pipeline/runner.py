@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from . import REPO_ROOT
-from .config import RunConfig
+from .config import RunConfig, predictor_key
 from .distributions import (
     DistributionBuilder,
     flatten_class_distributions,
@@ -93,7 +93,7 @@ def _process_day(cfg_dict: dict, date: str, root_str: str,
     for every predictor. Module-level so ProcessPoolExecutor can spawn it.
     Returns {predictor: {"counts": ..., "cls": ...}}."""
     import pipeline  # noqa: F401  (sys.path bootstrap in the child)
-    from pipeline.config import RunConfig
+    from pipeline.config import RunConfig, predictor_key
     from pipeline.distributions import DistributionBuilder
     from pipeline.features import DayFeatureCache
 
@@ -107,15 +107,28 @@ def _process_day(cfg_dict: dict, date: str, root_str: str,
     cls_keys = list(c.class_names) or [None]   # None = legacy single-class
     out: dict[str, dict] = {}
     for predictor in c.predictors:
+        r = _encode_and_count(builder, c, day_df, predictor, cls_keys)
+        out[predictor_key(predictor)] = r
+    return out
+
+
+def _encode_and_count(builder, c, day_df, predictor, cls_keys) -> dict:
+    """Encode one predictor spec and count. A string is the bivariate
+    encoding (SEQ + CLS); a list is the multivariate joint encoding
+    (SEQ only — no colleague-defined multivariate CLS output)."""
+    r = {}
+    if isinstance(predictor, str):
         ts, z12 = builder.encode_bivariate(day_df, predictor)
-        r = {}
         if c.sequence_calculation:
             r["counts"] = builder.sequence_counts(z12)[1]
         if c.class_calculation:
             r["cls"] = {k: builder.class_counts(ts, z12, cls_name=k)
                         for k in cls_keys}
-        out[predictor] = r
-    return out
+    else:
+        z_joint = builder.encode_multivariate(day_df, list(predictor))
+        if c.sequence_calculation:
+            r["counts"] = builder.sequence_counts(z_joint)[1]
+    return r
 
 
 def _resolve_workers(requested: int, n_dates: int) -> int:
@@ -155,21 +168,26 @@ def run(cfg: RunConfig, run_id: str | None = None,
     c = cfg.distributions
     dates = list(cfg.data.dates)
     predictors = list(c.predictors)
-    alphabet = list(range(cfg.alphabet_size))
     max_len = c.max_seq_length
     workers = _resolve_workers(getattr(cfg.featurize, "workers", 1), len(dates))
 
     cls_keys = list(c.class_names) or [None]   # None = legacy single-class
-    state = {p: {"L": [], "first": None, "last": None, "all": None,
-                 "C": {k: [] for k in cls_keys},
-                 "all_cls": {k: None for k in cls_keys}} for p in predictors}
+    pkeys = [predictor_key(p) for p in predictors]
+    # symbol alphabet per predictor: n_symbols^2 (bivariate) or
+    # n_symbols^(1+len) (multivariate list entry)
+    alphabets = {predictor_key(p): list(range(cfg.alphabet_size_for(p)))
+                 for p in predictors}
+    state = {pk: {"L": [], "first": None, "last": None, "all": None,
+                  "C": {k: [] for k in cls_keys},
+                  "all_cls": {k: None for k in cls_keys}} for pk in pkeys}
 
     def fold(day_result: dict):
         """Aggregate one day's counts — identical math/order to the
         original incremental loop."""
-        for predictor in predictors:
-            st = state[predictor]
-            r = day_result[predictor]
+        for pk in pkeys:
+            st = state[pk]
+            r = day_result[pk]
+            alphabet = alphabets[pk]
             if c.sequence_calculation:
                 counts = r["counts"]
                 st["L"].append(counts)
@@ -178,7 +196,7 @@ def run(cfg: RunConfig, run_id: str | None = None,
                 st["last"] = counts
                 st["all"] = integrate_distributions(st["L"], max_len, alphabet)
                 st["L"] = [st["all"]]
-            if c.class_calculation:
+            if c.class_calculation and "cls" in r:
                 for k in cls_keys:
                     st["C"][k].append(r["cls"][k])
                     st["all_cls"][k] = integrate_conditional_class_distributions(
@@ -197,15 +215,8 @@ def run(cfg: RunConfig, run_id: str | None = None,
                 day_df = cache.get(date)
                 day_result = {}
                 for predictor in predictors:
-                    ts, z12 = builder.encode_bivariate(day_df, predictor)
-                    r = {}
-                    if c.sequence_calculation:
-                        r["counts"] = builder.sequence_counts(z12)[1]
-                    if c.class_calculation:
-                        r["cls"] = {k: builder.class_counts(ts, z12,
-                                                            cls_name=k)
-                                    for k in cls_keys}
-                    day_result[predictor] = r
+                    day_result[predictor_key(predictor)] = _encode_and_count(
+                        builder, c, day_df, predictor, cls_keys)
                 fold(day_result)
         else:
             import multiprocessing as mp
@@ -237,7 +248,8 @@ def run(cfg: RunConfig, run_id: str | None = None,
         out_dir.mkdir(parents=True, exist_ok=True)
         outputs: dict[str, dict] = {}
         for predictor in predictors:
-            st = state[predictor]
+            pk = predictor_key(predictor)
+            st = state[pk]
             paths = {}
             if c.sequence_calculation and st["all"] is not None:
                 distrs_all, samples_all = format_counts(st["all"])
@@ -254,7 +266,7 @@ def run(cfg: RunConfig, run_id: str | None = None,
                         pickle.dump(
                             flatten_class_distributions(st["all_cls"][k]), fh)
                     paths["cls" if k is None else f"cls_{k}"] = str(p)
-            outputs[predictor] = paths
+            outputs[pk] = paths
 
         progress.done(f"wrote {sum(len(v) for v in outputs.values())} files")
         return outputs

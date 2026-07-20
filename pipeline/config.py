@@ -19,6 +19,15 @@ from typing import Any
 import yaml
 
 
+def predictor_key(predictor) -> str:
+    """Stable string key for a predictor spec: a feature name, or a
+    '+'-joined tag for a multivariate (list) predictor. Used for dict
+    keys and per-predictor file names inside outputs/runs."""
+    if isinstance(predictor, str):
+        return predictor
+    return "+".join(predictor)
+
+
 def _f(default, help="", choices=None, advanced=False, **kw):
     md = {"help": help}
     if choices:
@@ -102,7 +111,14 @@ class DistributionConfig:
                                    "ofi_L3_norm_n", "ofi_L10_norm_n", "ofi_L1_n",
                                    "ofi_L1_norm_n", "micro_price"],
                           "Predictor features (second variate); one SEQ/CLS "
-                          "output pair is produced per predictor.")
+                          "output pair is produced per predictor. A nested "
+                          "list entry is one multivariate predictor: "
+                          "predicted + the listed features jointly encoded "
+                          "(get_z_ts math, alphabet n_symbols^(1+len)) into "
+                          "one SEQ_DISTR_{sym}_multivariate_* output "
+                          "(SEQ only — the colleague defines no "
+                          "multivariate CLS; class-conditional joint stats "
+                          "live in the ensemble stage).")
     max_seq_length: int = _f(6, "Maximum subsequence (n-gram) length.")
     sequence_calculation: bool = _f(True, "Compute sequence distributions "
                                           "(SEQ_DISTR_* outputs).")
@@ -184,7 +200,19 @@ class TrainingConfig:
     model: str = _f("kraus", "Model family; registered trainers appear in "
                              "pipeline.models.REGISTRY. More can be plugged in.",
                     choices=["kraus"])
-    predictor: str = _f("tvi_n", "Which predictor's SEQ_DISTR_* file to train on.")
+    predictor: str = _f("tvi_n", "Which predictor's SEQ_DISTR_* file to train "
+                                 "on. A list (e.g. [ofi_L10_norm_n, "
+                                 "micro_price, vpin]) trains on that "
+                                 "multivariate SEQ_DISTR_* file with alphabet "
+                                 "m = n_symbols^(1+len) — the "
+                                 "LearningKraus_multivariate driver.")
+    predictor_abbrev: str = _f("", "Short tag replacing the predictor part of "
+                                   "MOD_/WGHTS_ file names for multivariate "
+                                   "(list) training — e.g. 'L10_micro_vpin', "
+                                   "the colleague's hand-written abbreviation. "
+                                   "Empty = derive from the SEQ_DISTR file "
+                                   "name. Ignored for string predictors.",
+                               advanced=True)
     seq_distr_file: str = _f("", "Explicit path to a SEQ_DISTR_* pickle; empty = "
                                  "derive from the distribution settings above.")
     n_qubits: int = _f(3, "System register size; Hilbert dim d = 2^n_qubits.")
@@ -246,10 +274,24 @@ class RunConfig:
     def alphabet_size(self) -> int:
         return self.encode.n_symbols ** 2   # bivariate encoding
 
+    def alphabet_size_for(self, predictor) -> int:
+        """Symbol-alphabet size for one predictor spec: n_symbols^2 for a
+        string (bivariate), n_symbols^(1+len) for a list (multivariate)."""
+        if isinstance(predictor, str):
+            return self.alphabet_size
+        return self.encode.n_symbols ** (1 + len(predictor))
+
     def vol_window(self) -> int:
         return self.featurize.vol_window or 3 * self.featurize.frequency
 
-    def seq_distr_name(self, predictor: str) -> str:
+    def seq_distr_name(self, predictor) -> str:
+        if not isinstance(predictor, str):
+            # verbatim from the LearningKraus_multivariate driver: predicted
+            # + first + last predictor, dash-joined
+            p = list(predictor)
+            return ("SEQ_DISTR_" + self.data.symbol + "_multivariate_"
+                    + self.distributions.predicted + "-" + p[0] + "-" + p[-1]
+                    + "_" + self.data.dates[0][:6])
         return ("SEQ_DISTR_" + self.data.symbol + "_bivariate_"
                 + self.distributions.predicted + "-" + predictor
                 + "_" + self.data.dates[0][:6])
@@ -310,9 +352,20 @@ class RunConfig:
             problems.append("distributions.max_seq_length must be >= 1")
         if not 0.0 <= self.distributions.sample_size <= 1.0:
             problems.append("distributions.sample_size must be in [0, 1]")
-        if (self.distributions.predicted in self.distributions.predictors):
+        dist_str = [p for p in self.distributions.predictors
+                    if isinstance(p, str)]
+        dist_lists = [p for p in self.distributions.predictors
+                      if not isinstance(p, str)]
+        if self.distributions.predicted in dist_str:
             problems.append("distributions.predicted also listed in predictors")
-        if self.training.predictor not in self.distributions.predictors:
+        for p in dist_lists:
+            variables = [self.distributions.predicted] + list(p)
+            if len(set(variables)) != len(variables):
+                problems.append(f"multivariate predictor {list(p)!r}: "
+                                f"duplicate variables in joint encoding "
+                                f"{variables}")
+        dist_keys = [predictor_key(p) for p in self.distributions.predictors]
+        if predictor_key(self.training.predictor) not in dist_keys:
             problems.append(f"training.predictor {self.training.predictor!r} not "
                             "in distributions.predictors")
         list_channels = [ch for ch in self.ensemble.predictors

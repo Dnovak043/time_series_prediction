@@ -74,7 +74,9 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     t = cfg.training
     root = Path(repo_root or REPO_ROOT)
     device = resolve_device(t.device)
-    m = cfg.alphabet_size
+    # n_symbols^2 for a string predictor (bivariate), n_symbols^(1+len)
+    # for a list predictor (multivariate joint encoding)
+    m = cfg.alphabet_size_for(t.predictor)
     sequences, emp_probs, seq_path = load_sequence_distribution(cfg, root)
 
     if progress:
@@ -112,11 +114,24 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     total_loss = float(sum(pe * (pe - pm) ** 2
                            for pe, pm in zip(emp_probs, p_model)))
 
-    base = seq_path.name.replace("SEQ_DISTR_", "")
     model_dir = root / t.model_dir
     model_dir.mkdir(parents=True, exist_ok=True)
-    mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
-    wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
+    if isinstance(t.predictor, str):
+        # original bivariate naming: MOD_<base>, WGHTS_MOD_<base>.pt
+        base = seq_path.name.replace("SEQ_DISTR_", "")
+        mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
+        wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
+    else:
+        # LearningKraus_multivariate driver naming, verbatim — including its
+        # WGHTS_ prefix without MOD_; predictor part is the hand-written
+        # abbreviation (training.predictor_abbrev) when given
+        pred_tag = t.predictor_abbrev or (
+            t.predictor[0] + "-" + t.predictor[-1])
+        base = (cfg.data.symbol + "_multivariate_"
+                + cfg.distributions.predicted + "-" + pred_tag
+                + "_" + cfg.data.dates[0][:6])
+        mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
+        wghts_path = model_dir / f"WGHTS_{base}_{t.n_qubits}q.pt"
 
     with open(mod_path, "wb") as fh:
         pickle.dump([model, sequences, emp_probs], fh)

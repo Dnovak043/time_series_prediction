@@ -42,6 +42,8 @@ empirical distributions, aggregated over a month
 models
   ├── KrausInstrument (LearningKraus.py): 16 complex d×d operators, d=2^3;
   │   P(s₁…s_T) = Tr(K_{s_T}···K_{s_1} ρ₀ K†…) fitted to SEQ_DISTR by NLL
+  │   — or, multivariate: 256 operators, d=2^6, fitted to the joint-channel
+  │   SEQ_DISTR (LearningKraus_multivariate driver; identical library code)
   └── ensemble of channel models (colleague's line of work; ENS_TD_* is
       its training data — the models themselves are not in this repo yet)
 ```
@@ -49,7 +51,13 @@ models
 Two research programs share this machinery:
 
 1. **Per-pair Kraus models** — one model per (log_mid, predictor) pair,
-   fitted to reproduce the pattern distribution.
+   fitted to reproduce the pattern distribution. The multivariate variant
+   promotes the ensemble's joint channel to a full Kraus model: a list
+   entry in `distributions.predictors` (e.g.
+   `[ofi_L10_norm_n, micro_price, vpin]`) emits a
+   `SEQ_DISTR_{sym}_multivariate_*` file over the 4⁴ = 256-symbol joint
+   alphabet, and a list `training.predictor` trains on it (his settings:
+   n_qubits 6, max_seq_len 4).
 2. **Channel ensemble** — instead of one model over many features jointly
    (alphabet would explode as 4^n), build small-channel models and combine
    them; `ENS_TD_*` records both each channel's marginal statistics and the
@@ -75,7 +83,7 @@ channel pairs it with several at once); it appears in every filename.
 | `TrainingDistributions/cls_reference.py` | Colleague's rewritten `process_distributions.py`, vendored with four `[vendoring fix N]`-marked corrections. Source of the v2 multi-class CLS semantics. |
 | `TrainingDistributions/integrate_day_distributions.py` | Merges per-day counts into monthly aggregates (pure dict math). |
 | `TrainingDistributions/plot_distributions.py` | Chart helpers; `plotDistributions` draws in chunks of 62 → the characteristic 4 charts per trained model. |
-| `LearningKraus.py` | The Kraus model + training loop (guarded original script). `pipeline/models.py` and the April harness call `train()` with explicit parameters. |
+| `LearningKraus.py` | The Kraus model + training loop (guarded original script). `pipeline/models.py` and the April harness call `train()` with explicit parameters. The colleague's `LearningKraus_multivariate.py` has byte-identical library code (only its driver differs: 256-symbol joint alphabet, n_qubits 6), so the multivariate trainer imports this same module — no second vendored copy. |
 | `april_run.ipynb` / `scripts/run_april.py` | The current flagship experiment (notebook and identical CLI): both symbols, all April, full spec — see §5. |
 | `april_smoke.ipynb` | 1-day plumbing check of every April stage; run before the real thing. |
 | `pipeline_control.ipynb` | The interactive control panel (all knobs, launch/monitor, results plots). |
@@ -103,6 +111,12 @@ channel pairs it with several at once); it appears in every filename.
 `[distrs, samples]` where `distrs = [[sequence, probability], …]`
 (sequence = list of ints 0–15, lengths 1–6, observed patterns only) and
 `samples = [sequence, …]` in the same order. Training input for Kraus models.
+
+**`SEQ_DISTR_{sym}_multivariate_{predicted}-{first}-{last}_{yyyymm}`**
+(a list entry in `distributions.predictors`; name carries the first and
+last listed feature, per the colleague's driver): same `[distrs, samples]`
+schema over the joint alphabet 0–4^(1+len)−1 (256 for his 3-predictor
+spec). Training input for the multivariate Kraus model.
 
 **`CLS_DISTR_*` — two conventions, know which you're reading:**
 - *Legacy* (`…_bivariate_{predicted}-{predictor}_{yyyymm}`, produced when
@@ -136,7 +150,12 @@ encoding (symbols 0–15) or, in v2, optionally a joint encoding of predicted
 **Models**: `MOD…_{n}q` = pickle `[model, sequences, emp_probs]` (full
 nn.Module + training set); `WGHTS_MOD…_{n}q.pt` = `torch.save` of
 `{"model_state", "meta"}` (meta: m, n_qubits, d, learn_rho0, symbol,
-predictor, epochs, seed). Per trained model you also get 4 PNG charts
+predictor, epochs, seed). Multivariate models follow the colleague's
+driver naming instead:
+`MOD_{sym}_multivariate_{predicted}-{tag}_{yyyymm}_{n}q` /
+`WGHTS_{sym}_multivariate_…_{n}q.pt` (no `MOD_` infix — his convention),
+where `tag` is `training.predictor_abbrev` (his `L10_micro_vpin`) or
+`{first}-{last}`. Per trained model you also get 4 PNG charts
 (`{sym}_{yyyymm}_{predicted}-{predictor}_{n}q_1..4.png`) — target-vs-model
 bars for pattern windows [0-62], [62-124], [124-186], remainder.
 
@@ -188,9 +207,9 @@ authority chain is:
    every output. On PASS it mints `tests/baseline_manifest.json` (golden
    sha256s + environment); `--fast` verifies against the manifest in ~4 min.
 3. **Vendored-code equivalence** (`tests/verify_ensemble_reference.py`,
-   `tests/verify_ensemble_v2.py`, `tests/verify_cls_v2.py`): the colleague's
-   programs, run their way from the vendored copies, vs the pipeline stages
-   — byte-compared.
+   `tests/verify_ensemble_v2.py`, `tests/verify_cls_v2.py`,
+   `tests/verify_multivariate_seq.py`): the colleague's programs, run their
+   way from the vendored copies, vs the pipeline stages — byte-compared.
 4. **Mechanical invariants**: `tests/test_fast_ops.py` and
    `tests/test_seq_counts_torch.py` (zero-tolerance exact equality of the
    optimized ops vs the original Python, incl. rng reproduction),
@@ -211,6 +230,7 @@ this gauntlet before merging:
 | day-parallel runner | ~core-count× throughput | serial-vs-parallel byte-identity |
 | ensemble stage | colleague's ~6,300 decodes/month → 21 | byte-identity vs his code |
 | ensemble v2 (joint multivariate channel) | his new experiment, config-driven | byte-identity vs his v2 code |
+| multivariate SEQ_DISTR + Kraus (256-symbol joint alphabet) | his LearningKraus_multivariate input, config-driven | byte-identity of the SEQ file + load filtering vs his code |
 
 Representative timings (this Mac): original driver 3,305s vs pipeline 254s
 for 2 days × 8 predictors, identical bytes; colleague's ensemble scope

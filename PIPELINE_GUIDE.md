@@ -84,7 +84,7 @@ Hover any field in the control panel for the same help text.
 | field | default | meaning |
 |---|---|---|
 | `predicted` | log_mid | first variate (the thing being predicted) |
-| `predictors` | 8 features | second variate; one SEQ/CLS output pair each |
+| `predictors` | 8 features | second variate; one SEQ/CLS output pair each. A **nested list entry** is one multivariate predictor: predicted + the listed features jointly encoded (same `get_z_ts` math as ensemble v2 channels, alphabet n_symbols^(1+len)) into one `SEQ_DISTR_{sym}_multivariate_{predicted}-{first}-{last}_{month}` file — the input to the multivariate Kraus model. SEQ only: the colleague defines no multivariate CLS output. Verified by user-run `tests/verify_multivariate_seq.py`. |
 | `max_seq_length` | 6 | max n-gram length |
 | `sequence_calculation` / `class_calculation` | true / true | which outputs to compute |
 | `class_name` | c1 | forward-move class: `c{k}` return-sign, `ca{k}` fwd-vs-bwd sum |
@@ -122,7 +122,8 @@ against the colleague's own functions run his way.
 | field | default | meaning |
 |---|---|---|
 | `model` | kraus | trainer from the registry (future models plug in here) |
-| `predictor` | tvi_n | which predictor's distribution to train on |
+| `predictor` | tvi_n | which predictor's distribution to train on. A **list** (e.g. `[ofi_L10_norm_n, micro_price, vpin]`) trains on that multivariate SEQ_DISTR file with alphabet m = n_symbols^(1+len) — the colleague's LearningKraus_multivariate driver (his settings: n_qubits 6, max_seq_len 4, otherwise the usual training defaults). Same `KrausInstrument` math, byte-identical library code. |
+| `predictor_abbrev` | "" | short tag replacing the predictor part of MOD_/WGHTS_ names in multivariate mode (his hand-written `L10_micro_vpin`); empty = `{first}-{last}` from the predictor list. Multivariate naming follows his driver verbatim, including `WGHTS_` without the `MOD_` infix: `MOD_{sym}_multivariate_{predicted}-{tag}_{month}_{q}q` / `WGHTS_{sym}_multivariate_..._{q}q.pt` |
 | `seq_distr_file` | (derived) | explicit pickle path override |
 | `n_qubits` | 3 | Hilbert dim d = 2^n_qubits |
 | `epochs` / `batch_size` / `lr` / `optimizer` | 3000 / 3072 / 1e-3 / adam | optimization |

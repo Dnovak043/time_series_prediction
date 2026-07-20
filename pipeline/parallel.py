@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from . import REPO_ROOT
-from .config import RunConfig
+from .config import RunConfig, predictor_key
 from .runner import RUNS_DIR, RunProgress, new_run_id
 
 POLL_SECONDS = 2.0
@@ -77,14 +77,15 @@ def train_all(cfg: RunConfig, run_id: str | None = None,
     results: dict[str, dict] = {}
     free_slots = list(range(workers))  # slot i uses gpus[i % len(gpus)]
 
-    def launch(predictor: str, slot: int):
+    def launch(predictor, slot: int):
+        pk = predictor_key(predictor)   # lists get a '+'-joined tag
         child_cfg = RunConfig.from_dict(cfg.to_dict())
         child_cfg.training.predictor = predictor
-        cfg_path = run_dir / f"config_{predictor}.yaml"
+        cfg_path = run_dir / f"config_{pk}.yaml"
         child_cfg.save(cfg_path)
 
-        child_id = f"{run_id}-{predictor}"
-        log_path = run_dir / f"train_{predictor}.log"
+        child_id = f"{run_id}-{pk}"
+        log_path = run_dir / f"train_{pk}.log"
         env = dict(os.environ)
         device = "cpu"
         if gpus:
@@ -95,10 +96,10 @@ def train_all(cfg: RunConfig, run_id: str | None = None,
             [sys.executable, "-m", "pipeline", "train",
              "--config", str(cfg_path), "--run-id", child_id],
             cwd=root, stdout=log_fh, stderr=subprocess.STDOUT, env=env)
-        running[predictor] = {"proc": proc, "slot": slot, "fh": log_fh,
-                              "run_id": child_id, "device": device,
-                              "log": str(log_path)}
-        print(f"[train-all] {predictor}: started on {device} "
+        running[pk] = {"proc": proc, "slot": slot, "fh": log_fh,
+                       "run_id": child_id, "device": device,
+                       "log": str(log_path)}
+        print(f"[train-all] {pk}: started on {device} "
               f"(run {child_id}, log {log_path.name})", flush=True)
 
     try:

@@ -58,7 +58,15 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `ensemble_reference_2.py`) allows list channels (joint multivariate
   encoding of predicted + listed features, `get_z_ts` math, alphabet
   n_symbols^(1+len)) and names files `..._ALL`; v1 is bivariate-only with
-  `..._ALL_{n}` names and swept c4.
+  `..._ALL_{n}` names and swept c4. Multivariate Kraus: a list entry in
+  `distributions.predictors` emits `SEQ_DISTR_{sym}_multivariate_{pred}-`
+  `{first}-{last}_{month}` (same joint encoding; SEQ only — no colleague
+  multivariate CLS); a list `training.predictor` trains on it with
+  m = n_symbols^(1+len). LearningKraus_multivariate.py's library code is
+  byte-identical to LearningKraus.py (no second vendored copy — only his
+  driver differs); MOD_/WGHTS_ names follow his driver verbatim, incl.
+  `WGHTS_` without `MOD_` and the `training.predictor_abbrev` tag
+  (`L10_micro_vpin`).
 
 ## Environments
 
@@ -86,6 +94,10 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `tests/verify_cls_v2.py` — vendored colleague code run his way vs
   pipeline stages, byte-for-byte. All three PASSED (v2 ensemble:
   2026-07-16, 1-day scope).
+- `tests/verify_multivariate_seq.py` — multivariate SEQ_DISTR (input to
+  the multivariate Kraus model) + its training-load filtering vs the
+  colleague's code composed his way (his get_z_ts, the pure-Python
+  original counting, his naming), byte-for-byte. NOT YET RUN.
 - `april_smoke.ipynb` — 1-day plumbing check of every April stage; expected
   counts derived from the config. Run before `april_run.ipynb`.
 
@@ -101,6 +113,11 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   per-model). Training defaults = original `LearningKraus.main()` values.
 - Ensemble v2 (`ensemble_training_data_2.py`, PR #6) is integrated, is the
   default, and its byte-equivalence harness PASSED (user-run, 1 day).
+- Multivariate Kraus (`LearningKraus_multivariate.py`, PR #7) is integrated:
+  list predictors in distributions/training, his file naming, harness
+  `tests/verify_multivariate_seq.py` — awaiting the user's harness run.
+  Training on the 256-symbol alphabet (m·d² = 256·64² complex params) is a
+  compute-box job, not a Mac job.
 - `tests/baseline_manifest.json` not yet minted — first full
   `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
 
