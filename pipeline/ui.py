@@ -37,10 +37,64 @@ _LAYOUT = W.Layout(width="440px")
 # ---------------------------------------------------------------------------
 # widget <-> field mapping
 # ---------------------------------------------------------------------------
+class ChoiceOrCustom(W.HBox):
+    """Dropdown of the common presets + a specification textbox for values
+    outside them (a `free_form` choices field, e.g. training.device='cuda:3'
+    written by the April GPU fan-out).
+
+    Selecting the CUSTOM sentinel enables the textbox and takes its value;
+    any other selection takes the dropdown's and greys the textbox out.
+    Exposes a single `.value` (get and set) so the rest of this module —
+    `_read_widget`, `collect`, `apply` — treats it like any other widget.
+    """
+
+    CUSTOM = "custom…"
+
+    def __init__(self, choices, value, description="", style=None,
+                 layout=None, tooltip=""):
+        options = list(choices) + [self.CUSTOM]
+        known = value in choices
+        self._dd = W.Dropdown(
+            options=options, value=value if known else self.CUSTOM,
+            description=description, style=style or _STYLE,
+            layout=W.Layout(width="300px"), tooltip=tooltip)
+        self._txt = W.Text(
+            value="" if known else str(value), placeholder="e.g. cuda:0",
+            disabled=known, layout=W.Layout(width="140px"))
+        self._dd.observe(self._on_choice, names="value")
+        super().__init__([self._dd, self._txt])
+
+    def _on_choice(self, _change):
+        self._txt.disabled = self._dd.value != self.CUSTOM
+
+    @property
+    def value(self):
+        if self._dd.value == self.CUSTOM:
+            return self._txt.value.strip()
+        return self._dd.value
+
+    @value.setter
+    def value(self, v):
+        v = "" if v is None else str(v)
+        if v in [o for o in self._dd.options if o != self.CUSTOM]:
+            self._dd.value = v
+            self._txt.value = ""
+            self._txt.disabled = True
+        else:
+            self._dd.value = self.CUSTOM
+            self._txt.value = v
+            self._txt.disabled = False
+
+
 def _make_widget(info: dict) -> W.Widget:
     name, value = info["name"], info["value"]
     kw = dict(description=name, style=_STYLE, layout=_LAYOUT,
               tooltip=info["help"])
+    if info["choices"] and info.get("free_form"):
+        # presets stay one click away, but out-of-set values (cuda:3) are
+        # representable instead of raising TraitError on construction
+        return ChoiceOrCustom(info["choices"], value, description=name,
+                              style=_STYLE, tooltip=info["help"])
     if info["choices"]:
         return W.Dropdown(options=info["choices"], value=value, **kw)
     if isinstance(value, bool):

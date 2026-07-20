@@ -137,7 +137,7 @@ against the colleague's own functions run his way.
 | `plot_entries` | 200 | sequences charted by `plotDistributions`. It draws in chunks of 62, so 200 → the characteristic **4 PNGs per model**. 0 skips charting. Fewer than 200 surviving sequences yields fewer charts |
 | `plot_dpi` | 120 | resolution of the saved chart PNGs — a run parameter, since it changes the delivered image files |
 | `seed` | -1 | torch seed. -1 = unseeded (original `main()` behavior). **Declared but never applied before the training consolidation** — it now works |
-| `device` | auto | auto = cuda→cpu; `mps` opt-in (complex-op support is limited). An explicit `cuda:N` pins one training to one GPU — how the April fan-out schedules |
+| `device` | auto | auto = cuda→cpu; `mps` opt-in (complex-op support is limited). **Free-form**: besides the four presets it accepts an indexed device (`cuda:3`, `mps:0`), which is how the April fan-out pins one training per GPU and what lands in each per-model `config.yaml`. The control panel renders it as a preset dropdown **plus a specification textbox** (see §2b); `validate()` rejects anything that is neither a preset nor `cuda|mps:<int>`. |
 | `continue_from` | — | WGHTS_*.pt to resume |
 | `model_dir` | . | where MOD_*/WGHTS_* are written |
 | `predictors` | [] (= all) | which predictors `train-all` sweeps over |
@@ -166,6 +166,17 @@ notebook's `PREDICTED` (shadowed by `run_april.py`'s module constant).
   `seed`, `num_workers`, `eval_batch_size`, `plot_entries`, `plot_dpi`, and
   `LearningKraus.train()`'s DataLoader honours `num_workers` rather than
   hardcoding it.
+
+**Closed vs free-form choices.** A field declared with `choices=` is closed:
+`validate()` rejects any value outside the set, and the panel renders a plain
+dropdown. A field declared `choices=[...], free_form=True` treats those as
+*presets* — other values are legal and get their own validation rule, and the
+panel renders `ChoiceOrCustom`: the preset dropdown plus a specification
+textbox that activates on the `custom…` entry. `training.device` is the one
+such field today, because the GPU fan-out writes `cuda:3` and that value has
+to survive save → load → panel. Before this, an out-of-set value passed
+`validate()` silently and then raised `TraitError` at widget construction,
+making every per-model config from a real run unopenable.
 
 **Deliberate non-knobs** (fixed because varying them would break an output
 contract, not because they were overlooked):

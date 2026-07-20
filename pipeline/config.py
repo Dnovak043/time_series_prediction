@@ -19,6 +19,25 @@ from typing import Any
 import yaml
 
 
+_DEVICE_PRESETS = ("auto", "cuda", "cpu", "mps")
+
+
+def _validate_device(device) -> list[str]:
+    """training.device is free-form: the presets, or an indexed accelerator
+    like 'cuda:3' / 'mps:0'. Anything else is a typo that would otherwise
+    surface only when torch failed mid-training."""
+    import re
+
+    if not isinstance(device, str):
+        return [f"training.device {device!r} must be a string"]
+    if device in _DEVICE_PRESETS:
+        return []
+    if re.fullmatch(r"(cuda|mps):\d+", device):
+        return []
+    return [f"training.device {device!r} is not one of "
+            f"{list(_DEVICE_PRESETS)} or an indexed device like 'cuda:0'"]
+
+
 def predictor_key(predictor) -> str:
     """Stable string key for a predictor spec: a feature name, or a
     '+'-joined tag for a multivariate (list) predictor. Used for dict
@@ -28,10 +47,16 @@ def predictor_key(predictor) -> str:
     return "+".join(predictor)
 
 
-def _f(default, help="", choices=None, advanced=False, **kw):
+def _f(default, help="", choices=None, advanced=False, free_form=False, **kw):
+    """free_form=True: `choices` are the common presets, but other values are
+    legal too (validated by RunConfig.validate). The control panel renders
+    such a field as a dropdown *plus* a specification textbox instead of a
+    closed dropdown, so e.g. training.device='cuda:3' is representable."""
     md = {"help": help}
     if choices:
         md["choices"] = choices
+    if free_form:
+        md["free_form"] = True
     if advanced:
         md["advanced"] = True
     if callable(default):
@@ -276,8 +301,11 @@ class TrainingConfig:
                        advanced=True)
     device: str = _f("auto", "Compute device. auto = cuda if available else cpu "
                              "(mps is opt-in: complex-tensor support is limited). "
-                             "An explicit 'cuda:N' pins one training to one GPU.",
-                     choices=["auto", "cuda", "cpu", "mps"])
+                             "Besides these presets an explicit 'cuda:N' pins "
+                             "one training to one GPU — that is how the April "
+                             "stage-3 fan-out schedules, and such values are "
+                             "written into each per-model config.yaml.",
+                     choices=["auto", "cuda", "cpu", "mps"], free_form=True)
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
@@ -386,6 +414,20 @@ class RunConfig:
     def validate(self) -> list[str]:
         """Returns a list of problems (empty = ok). Cheap checks only."""
         problems = []
+        # closed `choices` fields must hold one of their options. Nothing
+        # enforced this before, so an out-of-set value survived save/load and
+        # only blew up later at widget construction (ipywidgets Dropdown
+        # raises TraitError when value is not in options).
+        for stage_name in STAGES:
+            stage_obj = getattr(self, stage_name)
+            for info in field_info(stage_obj):
+                if not info["choices"] or info["free_form"]:
+                    continue
+                if info["value"] not in info["choices"]:
+                    problems.append(
+                        f"{stage_name}.{info['name']} {info['value']!r} is not "
+                        f"one of {info['choices']}")
+        problems += _validate_device(self.training.device)
         if not self.data.dates:
             problems.append("data.dates is empty")
         for d in self.data.dates:
@@ -445,6 +487,7 @@ def field_info(stage_obj) -> list[dict[str, Any]]:
             "type": f.type,
             "help": f.metadata.get("help", ""),
             "choices": f.metadata.get("choices"),
+            "free_form": f.metadata.get("free_form", False),
             "advanced": f.metadata.get("advanced", False),
         })
     return out

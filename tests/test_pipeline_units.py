@@ -297,6 +297,76 @@ def test_training_jobs_handle_multivariate_predictors():
     print("  PASS multivariate predictors survive job build + listing")
 
 
+def test_device_cuda_index_loads_in_control_panel():
+    """The per-model config the April fan-out writes must open in the panel.
+
+    Regression: `_train_one` sets training.device='cuda:3' and train_model
+    persists it, but device declared choices=[auto,cuda,cpu,mps]; the panel
+    built W.Dropdown(options=..., value='cuda:3') and raised TraitError, so
+    exactly the configs a real run produces were unopenable. device is now
+    free_form: dropdown of presets + a specification textbox.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from pipeline.ui import ChoiceOrCustom, ControlPanel, _make_widget, \
+        _read_widget
+    from pipeline.config import field_info
+
+    info = [i for i in field_info(RunConfig().training)
+            if i["name"] == "device"][0]
+    assert info["free_form"], "training.device must stay free_form"
+    assert info["choices"] == ["auto", "cuda", "cpu", "mps"]
+
+    # presets remain a dropdown selection; the textbox is greyed out
+    w_preset = _make_widget(info)
+    assert isinstance(w_preset, ChoiceOrCustom)
+    assert w_preset.value == "auto" and w_preset._txt.disabled
+
+    # an indexed device is representable, not a construction error
+    w_custom = _make_widget(dict(info, value="cuda:3"))
+    assert w_custom.value == "cuda:3"
+    assert _read_widget(w_custom, "auto") == "cuda:3"      # collect() path
+    w_custom.value = "cpu"                                  # apply() path
+    assert w_custom.value == "cpu" and w_custom._txt.disabled
+    w_custom.value = "cuda:7"
+    assert w_custom.value == "cuda:7" and not w_custom._txt.disabled
+
+    # end to end: save what the fan-out saves, reopen it in the panel
+    cfg = RunConfig()
+    cfg.data.dates = ["20250401"]
+    cfg.training.device = "cuda:3"
+    assert cfg.validate() == [], cfg.validate()
+    with tempfile.TemporaryDirectory() as d:
+        path = cfg.save(Path(d) / "config.yaml")
+        panel = ControlPanel(path, repo_root=Path(d))
+        assert panel.collect().training.device == "cuda:3"
+    print("  PASS device 'cuda:N' round-trips through the control panel")
+
+
+def test_choices_are_validated():
+    """validate() rejects out-of-set values instead of deferring the failure
+    to widget construction — for closed choices, and for free-form device."""
+    for bad in ("gpu:1", "cuda:x", "CUDA", "cuda:", "cuda:1:2"):
+        cfg = RunConfig()
+        cfg.training.device = bad
+        assert any("device" in p for p in cfg.validate()), f"accepted {bad!r}"
+    for good in ("auto", "cuda", "cpu", "mps", "cuda:0", "cuda:7", "mps:0"):
+        cfg = RunConfig()
+        cfg.training.device = good
+        assert cfg.validate() == [], f"rejected {good!r}: {cfg.validate()}"
+
+    # closed (non-free-form) choices fields are now checked too
+    cfg = RunConfig()
+    cfg.featurize.resampling = "minutes"          # not in the choices
+    problems = cfg.validate()
+    assert any("featurize.resampling" in p for p in problems), problems
+    cfg = RunConfig()
+    cfg.training.optimizer = "adamax"
+    assert any("training.optimizer" in p for p in cfg.validate())
+    assert RunConfig().validate() == []
+    print("  PASS choices validated in config, not at widget-construction")
+
+
 def test_stage3_listing_format_sites_use_label():
     """Neither run surface may apply a format spec to the raw predictor."""
     import json as _json
@@ -323,6 +393,8 @@ if __name__ == "__main__":
                test_multivariate_predictor, test_asset_paths,
                test_no_dead_knobs, test_training_knobs_reach_the_trainer,
                test_training_jobs_handle_multivariate_predictors,
-               test_stage3_listing_format_sites_use_label]:
+               test_stage3_listing_format_sites_use_label,
+               test_device_cuda_index_loads_in_control_panel,
+               test_choices_are_validated]:
         fn()
     print("ALL UNIT TESTS PASSED")
