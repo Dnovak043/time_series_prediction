@@ -85,6 +85,7 @@ channel pairs it with several at once); it appears in every filename.
 | `TrainingDistributions/plot_distributions.py` | Chart helpers; `plotDistributions` draws in chunks of 62 → the characteristic 4 charts per trained model. |
 | `LearningKraus.py` | The Kraus model + training loop (guarded original script). `pipeline/models.py` and the April harness call `train()` with explicit parameters. The colleague's `LearningKraus_multivariate.py` has byte-identical library code (only its driver differs: 256-symbol joint alphabet, n_qubits 6), so the multivariate trainer imports this same module — no second vendored copy. |
 | `april_run.ipynb` / `scripts/run_april.py` | The current flagship experiment (notebook and identical CLI): NVDA, INTC, and IBM, all April, full spec — see §5. |
+| `scripts/export_feb_features.py` | One-off deliverable for the colleague: raw feature columns (no encoding/distributions) for 3 Feb days × AAPL/NVDA × {100 events, 1 second} × feature set → one file each, 12 total. Feature-name mapping documented in its docstring. |
 | `april_smoke.ipynb` | 1-day plumbing check of every April stage; run before the real thing. |
 | `pipeline_control.ipynb` | The interactive control panel (all knobs, launch/monitor, results plots). |
 | `compare_main_vs_dev.ipynb` | Visual/hash comparison of frozen-baseline outputs vs current outputs. |
