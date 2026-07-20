@@ -122,7 +122,9 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
                 workers: int, predictors: list[str] | None = None,
                 file_pattern: str | None = None, epochs: int = 3000,
                 n_qubits: int = 3, seed: int = -1,
-                train_predictors: list[str] | None = None) -> Path:
+                train_predictors: list[str] | None = None,
+                predicted: str | None = None,
+                cls_names: list[str] | None = None) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -133,9 +135,9 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # colleague's new process_distributions spec: 10 predictors (superset of
     # the 3 training predictors -> their SEQ files come out of the same run),
     # v2 multi-class CLS sweep with (-1,0,1) column order
-    cfg.distributions.predicted = PREDICTED
+    cfg.distributions.predicted = predicted or PREDICTED
     cfg.distributions.predictors = list(predictors or DIST_PREDICTORS)
-    cfg.distributions.class_names = list(CLS_NAMES)
+    cfg.distributions.class_names = list(cls_names or CLS_NAMES)
     cfg.distributions.class_values = [-1, 0, 1]
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
     cfg.featurize.workers = workers
