@@ -246,13 +246,11 @@ class TrainingConfig:
     max_seq_len: int = _f(6, "Drop training sequences longer than this.")
     min_seq_prob: float = _f(0.0, "Drop training sequences with empirical "
                                   "probability below this.", advanced=True)
-    num_workers: int = _f(0, "DataLoader worker processes. 0 = load in the "
-                             "training process (no IPC overhead, and no "
-                             "nested multiprocessing when trainings are "
-                             "themselves fanned across GPUs). Affects speed "
-                             "only, never results: shuffling is done by the "
-                             "sampler in the parent, workers only fetch.",
-                          advanced=True)
+    # NOTE: deliberately NO num_workers field. LearningKraus.train() accepts a
+    # num_workers argument but hardcodes num_workers=0 in its DataLoader, so
+    # the argument is dead — the original main()'s num_workers=8 never took
+    # effect either. Exposing a knob that cannot change anything would be
+    # worse than not having one, and train() is vendored code we do not edit.
     plot_entries: int = _f(200, "How many sequences to chart with "
                                 "plotDistributions after training. It draws "
                                 "in chunks of 62, so 200 -> the "

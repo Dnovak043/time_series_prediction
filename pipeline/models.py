@@ -111,7 +111,9 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         epochs=t.epochs,
         learn_rho0=t.learn_rho0,
         model=model0,
-        num_workers=t.num_workers,
+        # num_workers intentionally not passed: lk.train() hardcodes
+        # num_workers=0 in its DataLoader and ignores the argument, so the
+        # original main()'s num_workers=8 was a no-op too.
         device=device,
         optimizer_name=t.optimizer,
         loss_kind=t.loss_kind,
