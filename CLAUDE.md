@@ -68,11 +68,19 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `distributions.predictors` emits `SEQ_DISTR_{sym}_multivariate_{pred}-`
   `{first}-{last}_{month}` (same joint encoding; SEQ only — no colleague
   multivariate CLS); a list `training.predictor` trains on it with
-  m = n_symbols^(1+len). LearningKraus_multivariate.py's library code is
-  byte-identical to LearningKraus.py (no second vendored copy — only his
-  driver differs); MOD_/WGHTS_ names follow his driver verbatim, incl.
-  `WGHTS_` without `MOD_` and the `training.predictor_abbrev` tag
-  (`L10_micro_vpin`).
+  m = n_symbols^(1+len). LearningKraus_multivariate.py's library code
+  matches LearningKraus.py apart from our two disclosed deltas (the
+  `on_epoch` callback and `[vendoring fix 1]`), so there is no second
+  vendored copy — only his driver differs; MOD_/WGHTS_ names follow his
+  driver verbatim, incl. `WGHTS_` without `MOD_` and the
+  `training.predictor_abbrev` tag (`L10_micro_vpin`).
+- **`[vendoring fix 1]` in `LearningKraus.py`** (CRLF, byte-level edit):
+  `train()`'s DataLoader hardcoded `num_workers=0`, so its own
+  `num_workers` argument was dead and the original `main()`'s
+  `num_workers=8` never took effect. Now honoured, making
+  `training.num_workers` a real knob. Results-neutral (shuffling is in the
+  parent sampler; `SeqDataset.__getitem__` is a pure index lookup).
+  `train_old` is legacy and left untouched.
 
 ## Environments
 
