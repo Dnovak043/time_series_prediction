@@ -1,8 +1,10 @@
 data:
   symbol: NVDA
+  asset_paths: {NVDA: data/NVDA_INTC, INTC: data/NVDA_INTC, AAPL: data/AAPL, IBM: data/IBM}
   data_path: data/NVDA_INTC
   file_pattern: xnas-itch-{date}.mbp-10.dbn.zst
   dates: ['20250401', '20250402']
+  instrument_filter: false
   session_start: 09:30
   session_end: '15:30'
 featurize:
@@ -10,6 +12,7 @@ featurize:
   frequency: 100
   forward_intervals: [1, 2, 3, 4]
   vol_window: 0
+  workers: 1
   use_cache: true
   cache_dir: outputs/feature_cache
   cache_format: parquet
@@ -23,13 +26,45 @@ distributions:
   sequence_calculation: true
   class_calculation: true
   class_name: c1
+  class_names: []
+  class_values: [-1, 0, 1]
   class_theta: 0.0
   num_classes: 3
   sample_size: 1.0
   sample_after_length: 30
   random_state: 42
   output_dir: .
-training: {model: kraus, predictor: tvi_n, seq_distr_file: '', n_qubits: 3, epochs: 3000,
-  batch_size: 3072, lr: 0.001, optimizer: adam, loss_kind: nll_seq, length_mixture: uniform,
-  learn_rho0: true, max_seq_len: 6, min_seq_prob: 0.0, device: auto, continue_from: '',
-  model_dir: .}
+ensemble:
+  reference: v2
+  seq_lengths: [1, 2, 3, 4, 5]
+  class_names: [c1, c2, ca2, ca4]
+  class_values: [-1, 0, 1]
+  predictors:
+  - ofi_L10_norm_n
+  - micro_price
+  - vpin
+  - [ofi_L10_norm_n, micro_price, vpin]
+  smoothing: 0.0
+  output_dir: outputs/ensemble
+training:
+  model: kraus
+  predictor: tvi_n
+  predictor_abbrev: ''
+  seq_distr_file: ''
+  n_qubits: 3
+  epochs: 3000
+  batch_size: 3072
+  lr: 0.001
+  optimizer: adam
+  loss_kind: nll_seq
+  length_mixture: uniform
+  learn_rho0: true
+  max_seq_len: 6
+  min_seq_prob: 0.0
+  device: auto
+  continue_from: ''
+  model_dir: .
+  predictors: []
+  gpus: auto
+  max_parallel: 0
+  seed: -1

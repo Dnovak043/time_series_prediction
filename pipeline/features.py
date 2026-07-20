@@ -36,7 +36,7 @@ class DayFeatureCache:
         self.feat_cfg = feat_cfg
         self.root = Path(repo_root or REPO_ROOT)
         self.cache_dir = self.root / feat_cfg.cache_dir
-        self.data_path = str(self.root / data_cfg.data_path)
+        self.data_path = str(self.root / data_cfg.resolved_data_path())
 
     # -- cache keying ---------------------------------------------------------
     def params_key(self) -> str:
@@ -56,6 +56,12 @@ class DayFeatureCache:
         # (built before the flag existed) stay valid for the legacy mode
         if getattr(d, "instrument_filter", False):
             payload["instrument_filter"] = True
+        # same principle for per-asset directories: key on the directory only
+        # when asset_paths resolves the symbol, so data_path-only configs keep
+        # their existing cache entries; two directories can hold same-named
+        # files with different contents, so the directory must be in the key
+        if d.symbol in (getattr(d, "asset_paths", None) or {}):
+            payload["data_dir"] = d.asset_paths[d.symbol]
         blob = json.dumps(payload, sort_keys=True)
         return hashlib.md5(blob.encode()).hexdigest()[:10]
 

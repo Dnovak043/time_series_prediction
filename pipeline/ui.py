@@ -49,6 +49,10 @@ def _make_widget(info: dict) -> W.Widget:
         return W.IntText(value=value, **kw)
     if isinstance(value, float):
         return W.FloatText(value=value, step=None, **kw)
+    if isinstance(value, dict):
+        # mapping fields (data.asset_paths): YAML flow syntax round-trips
+        return W.Text(value=yaml.safe_dump(
+            value, default_flow_style=True).strip() if value else "{}", **kw)
     if isinstance(value, list):
         if any(isinstance(v, (list, dict)) for v in value) or info["type"] == "str":
             # nested channels (ensemble v2) or a list in a string-typed field
@@ -61,6 +65,12 @@ def _make_widget(info: dict) -> W.Widget:
 
 def _read_widget(widget: W.Widget, template_value):
     v = widget.value
+    if isinstance(template_value, dict):
+        s = str(v).strip()
+        if not s or s == "{}":
+            return {}
+        parsed = yaml.safe_load(s if s.startswith("{") else "{" + s + "}")
+        return dict(parsed) if isinstance(parsed, dict) else {}
     if isinstance(template_value, list):
         if (any(isinstance(t, (list, dict)) for t in template_value)
                 or "[" in str(v)):
@@ -172,7 +182,10 @@ class ControlPanel:
             for info in field_info(getattr(cfg, stage_name)):
                 w = self._widgets[(stage_name, info["name"])]
                 v = info["value"]
-                if isinstance(v, list):
+                if isinstance(v, dict):
+                    w.value = (yaml.safe_dump(v, default_flow_style=True)
+                               .strip() if v else "{}")
+                elif isinstance(v, list):
                     w.value = ", ".join(str(x) for x in v)
                 elif isinstance(w, (W.IntText, W.FloatText, W.Checkbox, W.Dropdown)):
                     w.value = v

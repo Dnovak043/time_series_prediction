@@ -55,7 +55,8 @@ Hover any field in the control panel for the same help text.
 | field | default | meaning |
 |---|---|---|
 | `symbol` | NVDA | ticker used in file naming and outputs |
-| `data_path` | data/NVDA_INTC | directory with raw `.dbn.zst` files |
+| `asset_paths` | {} | **per-asset raw-data directory**, e.g. `{NVDA: data/NVDA_INTC, INTC: data/NVDA_INTC, AAPL: data/AAPL, IBM: data/IBM}`. Raw files share names across directories but hold different assets; several assets may map to one directory. The run reads from the entry for `symbol`; unlisted symbols (or an empty mapping) fall back to `data_path`. The feature cache keys on the resolved directory, so same-named files from different directories never collide. |
+| `data_path` | data/NVDA_INTC | directory with raw `.dbn.zst` files; fallback when `symbol` has no `asset_paths` entry |
 | `file_pattern` | xnas-itch-{date}.mbp-10.dbn.zst | raw file name per day |
 | `dates` | [20250401, 20250402] | trading days (yyyymmdd) |
 | `instrument_filter` | false | **true = filter events to `symbol` before featurizing.** The raw files carry NVDA+INTC interleaved; false reproduces the legacy (mixed-stream) behavior and the frozen baseline. Set true for per-symbol runs (see `scripts/run_april.py`). |
