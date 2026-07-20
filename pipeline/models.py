@@ -122,7 +122,8 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     train_seconds = _time.time() - _t0
 
     # evaluation + persistence (same artifacts as the original script)
-    p_model = lk.predict_probs(model, sequences, batch_size=2048)
+    p_model = lk.predict_probs(model, sequences,
+                               batch_size=t.eval_batch_size)
     total_loss = float(sum(pe * (pe - pm) ** 2
                            for pe, pm in zip(emp_probs, p_model)))
 
@@ -164,7 +165,8 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
 
         def _save_instead_of_show(*a, **k):
             fig_paths.append(f"{fig_base}_{len(fig_paths) + 1}.png")
-            plt.savefig(fig_paths[-1], dpi=120, bbox_inches="tight")
+            plt.savefig(fig_paths[-1], dpi=t.plot_dpi,
+                        bbox_inches="tight")
             plt.close()
 
         orig_show = plt.show

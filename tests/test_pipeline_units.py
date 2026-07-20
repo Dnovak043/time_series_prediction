@@ -181,12 +181,78 @@ def test_asset_paths():
     print("  PASS asset paths (resolution/cache key/yaml/default.yaml/ui)")
 
 
+def test_no_dead_knobs():
+    """Every config field must actually be read by the code.
+
+    Guards the project's no-invisible-parameters rule from its inverse: a
+    knob that is exposed in YAML/UI/CLI but that nothing consumes, so
+    changing it silently does nothing. Two of these have already shipped
+    (training.num_workers, which LearningKraus.train() ignored until
+    [vendoring fix 1], and the notebook's PREDICTED).
+    """
+    import glob
+    import re
+    from dataclasses import fields as dc_fields
+
+    from pipeline.config import STAGES
+
+    root = Path(__file__).resolve().parent.parent
+    sources = []
+    for pattern in ("pipeline/*.py", "scripts/*.py"):
+        for path in glob.glob(str(root / pattern)):
+            if path.endswith("config.py"):
+                continue          # declaration site, not a use
+            sources.append(Path(path).read_text())
+    blob = "\n".join(sources)
+
+    dead = []
+    for stage, cls in STAGES.items():
+        for f in dc_fields(cls):
+            # attribute access (cfg.training.epochs) or getattr/string form
+            # (getattr(d, "instrument_filter", False))
+            if not (re.search(rf"\.{f.name}\b", blob)
+                    or re.search(rf'["\']{f.name}["\']', blob)):
+                dead.append(f"{stage}.{f.name}")
+    assert not dead, f"config fields nothing reads: {dead}"
+    n = sum(len(dc_fields(c)) for c in STAGES.values())
+    print(f"  PASS no dead knobs ({n} config fields, all consumed)")
+
+
+def test_training_knobs_reach_the_trainer():
+    """The knobs added when training was consolidated must be wired, not
+    just declared — models.py should read each of them."""
+    root = Path(__file__).resolve().parent.parent
+    models_src = (root / "pipeline" / "models.py").read_text()
+    for field in ("seed", "num_workers", "eval_batch_size",
+                  "plot_entries", "plot_dpi"):
+        assert f"t.{field}" in models_src, f"models.py never reads t.{field}"
+
+    # and LearningKraus.train() must actually honour num_workers
+    # ([vendoring fix 1]) rather than hardcoding it
+    lk_src = (root / "LearningKraus.py").read_text()
+    train_body = lk_src[lk_src.index("def train("):]
+    loader = train_body[train_body.index("DataLoader("):]
+    # delimit on collate_fn rather than the first ')' — the [vendoring fix 1]
+    # comment inside the call contains "main()'s"
+    loader = loader[:loader.index("collate_fn")]
+    # drop comment lines: the [vendoring fix 1] note quotes both the old
+    # "num_workers=0" and "main()'s", which would confuse either check
+    code = "\n".join(ln for ln in loader.splitlines()
+                     if not ln.strip().startswith("#"))
+    assert "num_workers=num_workers" in code, (
+        "LearningKraus.train() DataLoader is not honouring num_workers")
+    assert "num_workers=0" not in code, (
+        "LearningKraus.train() DataLoader still hardcodes num_workers=0")
+    print("  PASS training knobs reach the trainer (incl. vendoring fix 1)")
+
+
 if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore")
     for fn in [test_yaml_roundtrip, test_unknown_key_rejected, test_validate,
                test_cache_key, test_parse_hhmm,
                test_legacy_imports_side_effect_free, test_model_registry,
-               test_multivariate_predictor, test_asset_paths]:
+               test_multivariate_predictor, test_asset_paths,
+               test_no_dead_knobs, test_training_knobs_reach_the_trainer]:
         fn()
     print("ALL UNIT TESTS PASSED")

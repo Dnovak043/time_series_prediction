@@ -26,6 +26,12 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
    progress banners and test assertions — from the *loaded config*, never
    from parallel constants. Notebook constants may only feed the config
    generator, and the notebook prints the full generated YAML before running.
+   **The inverse is equally binding: never ship a knob nothing reads.** If a
+   parameter turns out to be ignored by the code it claims to drive, make it
+   work (a disclosed `[vendoring fix N]` if the ignoring code is vendored) —
+   do not delete it and do not leave it as decoration. `test_no_dead_knobs`
+   and `test_training_knobs_reach_the_trainer` enforce this; PIPELINE_GUIDE
+   §2b lists the deliberate non-knobs.
 5. **Vendor colleague code verbatim.** External research code is committed
    byte-for-byte (CRLF preserved) with a `__main__` guard; any unavoidable
    fix is marked `[vendoring fix N]` inline and disclosed. Pipeline stages
@@ -111,7 +117,13 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 - `tests/verify_multivariate_seq.py` — multivariate SEQ_DISTR (input to
   the multivariate Kraus model) + its training-load filtering vs the
   colleague's code composed his way (his get_z_ts, the pure-Python
-  original counting, his naming), byte-for-byte. NOT YET RUN.
+  original counting, his naming), byte-for-byte. PASSED (user-run).
+- `tests/test_pipeline_units.py` also carries the config audit:
+  `test_no_dead_knobs` (every one of the 67 config fields is read by
+  `pipeline/` or `scripts/`) and `test_training_knobs_reach_the_trainer`
+  (the consolidated trainer reads seed/num_workers/eval_batch_size/
+  plot_entries/plot_dpi, and `train()`'s DataLoader honours num_workers).
+  11 tests total, Claude-runnable (no market data).
 - `april_smoke.ipynb` — 1-day plumbing check of every April stage; expected
   counts derived from the config. Run before `april_run.ipynb`.
 

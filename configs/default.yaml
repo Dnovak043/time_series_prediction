@@ -61,6 +61,10 @@ training:
   learn_rho0: true
   max_seq_len: 6
   min_seq_prob: 0.0
+  num_workers: 0
+  eval_batch_size: 2048
+  plot_entries: 200
+  plot_dpi: 120
   device: auto
   continue_from: ''
   model_dir: .

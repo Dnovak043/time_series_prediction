@@ -132,12 +132,57 @@ against the colleague's own functions run his way.
 | `length_mixture` | uniform | length reweighting (`uniform`/`geometric`/`none`) |
 | `learn_rho0` | true | learn the initial state vs fixed \|0⟩⟨0\| |
 | `max_seq_len` / `min_seq_prob` | 6 / 0 | training-set filters |
-| `device` | auto | auto = cuda→cpu; `mps` opt-in (complex-op support is limited) |
+| `num_workers` | 0 | DataLoader worker processes. Speed only, never results (shuffling is done by the sampler in the parent; `SeqDataset.__getitem__` is a pure index lookup). **`LearningKraus.train()` ignored this until `[vendoring fix 1]`**, so the original `main()`'s `num_workers=8` never took effect — 8 now reproduces its stated intent. Keep low when trainings are fanned across GPUs: each is already a subprocess and workers nest beneath it. |
+| `eval_batch_size` | 2048 | batching of the post-training `predict_probs` pass (original used 2×1024). Memory/speed only; probabilities are identical for any value |
+| `plot_entries` | 200 | sequences charted by `plotDistributions`. It draws in chunks of 62, so 200 → the characteristic **4 PNGs per model**. 0 skips charting. Fewer than 200 surviving sequences yields fewer charts |
+| `plot_dpi` | 120 | resolution of the saved chart PNGs — a run parameter, since it changes the delivered image files |
+| `seed` | -1 | torch seed. -1 = unseeded (original `main()` behavior). **Declared but never applied before the training consolidation** — it now works |
+| `device` | auto | auto = cuda→cpu; `mps` opt-in (complex-op support is limited). An explicit `cuda:N` pins one training to one GPU — how the April fan-out schedules |
 | `continue_from` | — | WGHTS_*.pt to resume |
 | `model_dir` | . | where MOD_*/WGHTS_* are written |
 | `predictors` | [] (= all) | which predictors `train-all` sweeps over |
 | `gpus` | auto | GPUs for `train-all`: all visible / `0,2,5` / `none` |
 | `max_parallel` | 0 (auto) | concurrent trainings; auto = one per GPU, else 1 |
+
+**Model file naming (bivariate):** `MOD_{sym}_bivariate_{predicted}-{predictor}_{month}_{q}q`
+and `WGHTS_MOD_..._{q}q.pt`. Runs made before the training consolidation used the
+April harness, which emitted `MODR_*` / `WGHTS_MODR_*` — a stray `R` from slicing
+only 8 of the 10 characters in `SEQ_DISTR_`, preserved at the time as an "original
+quirk". That is retired; filenames from current runs will not match those batches.
+
+### 2b. The no-invisible-parameters invariant
+
+Every value that changes a run must be a `RunConfig` field. The inverse also
+holds and is easier to violate: **a field that nothing reads is worse than no
+field**, because it looks like a working knob. Two shipped before the audit —
+`training.num_workers` (which `LearningKraus.train()` ignored) and the
+notebook's `PREDICTED` (shadowed by `run_april.py`'s module constant).
+
+`tests/test_pipeline_units.py` now enforces both directions:
+
+- `test_no_dead_knobs` — every field of every stage dataclass is read somewhere
+  in `pipeline/` or `scripts/` (67 fields at time of writing).
+- `test_training_knobs_reach_the_trainer` — the consolidated trainer reads
+  `seed`, `num_workers`, `eval_batch_size`, `plot_entries`, `plot_dpi`, and
+  `LearningKraus.train()`'s DataLoader honours `num_workers` rather than
+  hardcoding it.
+
+**Deliberate non-knobs** (fixed because varying them would break an output
+contract, not because they were overlooked):
+
+| value | where | why fixed |
+|---|---|---|
+| `sort="lexicographic"`, `include_prob=True` | `distributions.sequence_counts` | the SEQ_DISTR file format and ordering the colleague's loaders expect |
+| chunk size 62 | `LearningKraus.plotDistributions` | vendored drawing code; it is what makes `plot_entries=200` yield 4 charts |
+| `weight_decay=1e-4` | `LearningKraus.make_optimizer` call inside `train()` | vendored optimizer construction; not exposed by the original either |
+| progress-update cadence, cache-key hash length | `runner.py`, `features.py` | internal bookkeeping, no effect on outputs |
+
+**One documented asymmetry:** `distributions.class_theta` applies to the
+distribution stage's CLS outputs but **not** to the ensemble stage. That is
+correct, not a gap — the colleague's v2 `add_class_label`
+(`ensemble_reference_2.py`) has no `theta` parameter at all, and the
+byte-equivalence harness `tests/verify_ensemble_v2.py` passed against his code
+on that basis.
 
 ## 3. Three ways to drive it (same config file)
 
@@ -227,7 +272,8 @@ by automation.
   Uses the legacy code *on the current branch*, so it is a convenience
   check, not the trust anchor — `verify_against_baseline.py` is.
 - `tests/test_pipeline_units.py` — config/YAML/UI-widget roundtrips, cache
-  keying, import-safety of the guarded legacy scripts (seconds).
+  keying, import-safety of the guarded legacy scripts, plus the
+  no-dead-knobs audit of §2b (11 tests, seconds).
 - `compare_main_vs_dev.ipynb` — notebook view of the same evidence: hash
   summary table plus numeric/visual overlays of main's vs dev's
   distributions, re-openable anytime after a `verify_against_baseline.py`

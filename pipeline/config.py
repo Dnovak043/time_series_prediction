@@ -259,11 +259,21 @@ class TrainingConfig:
                              "are fanned across GPUs: each is already a "
                              "subprocess, and workers nest under it.",
                           advanced=True)
+    eval_batch_size: int = _f(2048, "Batch size for the post-training "
+                                    "predict_probs evaluation pass (the "
+                                    "original main() used 2*1024). Memory/"
+                                    "speed only — the probabilities are "
+                                    "identical for any batch size.",
+                              advanced=True)
     plot_entries: int = _f(200, "How many sequences to chart with "
                                 "plotDistributions after training. It draws "
                                 "in chunks of 62, so 200 -> the "
                                 "characteristic 4 PNGs per model. 0 = skip "
                                 "charting.")
+    plot_dpi: int = _f(120, "Resolution of the saved chart PNGs. Affects the "
+                            "delivered image files, so it is a run "
+                            "parameter, not a display preference.",
+                       advanced=True)
     device: str = _f("auto", "Compute device. auto = cuda if available else cpu "
                              "(mps is opt-in: complex-tensor support is limited). "
                              "An explicit 'cuda:N' pins one training to one GPU.",
