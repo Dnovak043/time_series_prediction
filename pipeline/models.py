@@ -134,6 +134,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         base = seq_path.name.replace("SEQ_DISTR_", "")
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
         wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
+        chart_tag = t.predictor
     else:
         # LearningKraus_multivariate driver naming, verbatim — including its
         # WGHTS_ prefix without MOD_; predictor part is the hand-written
@@ -145,6 +146,10 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
                 + "_" + cfg.data.dates[0][:6])
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
         wghts_path = model_dir / f"WGHTS_{base}_{t.n_qubits}q.pt"
+        # charts carry the SAME predictor tag as the model files, so a
+        # delivered bundle (2 result files + 4 PNGs) is internally
+        # consistent; predictor_key's '+'-joined form would not match
+        chart_tag = pred_tag
 
     # charts: LearningKraus.plotDistributions draws the first `plot_entries`
     # entries in chunks of 62 and calls plt.show() per chunk -> 4 figures for
@@ -159,7 +164,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
 
         fig_base = model_dir / (
             f"{cfg.data.symbol}_{cfg.data.dates[0][:6]}_"
-            f"{cfg.distributions.predicted}-{predictor_key(t.predictor)}_"
+            f"{cfg.distributions.predicted}-{chart_tag}_"
             f"{t.n_qubits}q")
         n = t.plot_entries
 

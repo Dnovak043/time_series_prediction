@@ -214,14 +214,19 @@ def build_training_jobs(configs: dict, gpus: list | None = None) -> list:
         cfg = RunConfig.load(cfg_path)
         for predictor in cfg.training.predictors:
             device = f"cuda:{gpus[len(jobs) % len(gpus)]}" if gpus else "cpu"
+            # a multivariate predictor is a list; `label` is the printable
+            # '+'-joined form (predictor_key), so every display/format site
+            # has a string and none of them has to re-handle the list case
+            label = predictor_key(predictor)
             jobs.append({
                 "symbol": symbol,
                 "predictor": predictor,
+                "label": label,
                 "config": str(cfg_path),
                 "device": device,
                 # own run dir per model: progress.json + config.yaml, so each
                 # training is watchable individually via `pipeline status`
-                "run_id": f"april-train-{symbol}-{predictor_key(predictor)}",
+                "run_id": f"april-train-{symbol}-{label}",
             })
     return jobs
 
@@ -360,7 +365,7 @@ def main():
           f"{t0cfg.optimizer}/{t0cfg.loss_kind}, "
           f"seed={'unseeded' if t0cfg.seed < 0 else t0cfg.seed} ===")
     for j in jobs:
-        print(f"    {j['symbol']:6s} x {j['predictor']:16s} -> {j['device']}")
+        print(f"    {j['symbol']:6s} x {j['label']:24s} -> {j['device']}")
 
     for i, r in enumerate(run_training_jobs(jobs, n_par), 1):
         results.append(r)

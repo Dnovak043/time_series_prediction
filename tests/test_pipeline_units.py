@@ -246,6 +246,74 @@ def test_training_knobs_reach_the_trainer():
     print("  PASS training knobs reach the trainer (incl. vendoring fix 1)")
 
 
+def test_training_jobs_handle_multivariate_predictors():
+    """A list (multivariate) entry in training.predictors must survive job
+    construction AND every display/format site in stage 3.
+
+    Regression: the job listing formatted the raw predictor with a string
+    spec (`f"{j['predictor']:16s}"`), which raises TypeError on a list —
+    crashing the April run after distributions and ensembles had already
+    completed. Jobs now carry a printable `label`.
+    """
+    import sys as _sys
+
+    import matplotlib
+    matplotlib.use("Agg")
+    root = Path(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(root / "scripts"))
+    from run_april import build_training_jobs
+
+    trio = ["ofi_L10_norm_n", "micro_price", "vpin"]
+    cfg = RunConfig()
+    cfg.data.symbol = "NVDA"
+    cfg.data.dates = ["20250401"]
+    cfg.distributions.predictors = ["tvi_n", trio]
+    cfg.training.predictor = "tvi_n"
+    cfg.training.predictors = ["tvi_n", trio]      # one string, one list
+    assert cfg.validate() == [], cfg.validate()
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg_path = cfg.save(Path(d) / "april_nvda.yaml")
+        jobs = build_training_jobs({"NVDA": cfg_path}, gpus=["0", "1"])
+
+    assert len(jobs) == 2, jobs
+    # the raw predictor is preserved for the trainer...
+    assert jobs[0]["predictor"] == "tvi_n"
+    assert jobs[1]["predictor"] == trio
+    # ...and a printable label exists for every job
+    assert jobs[0]["label"] == "tvi_n"
+    assert jobs[1]["label"] == "ofi_L10_norm_n+micro_price+vpin"
+    for j in jobs:
+        assert isinstance(j["label"], str)
+        # the exact format spec used by the stage-3 job listing, in both
+        # run_april.py and april_run.ipynb — this is what used to raise
+        f"    {j['symbol']:6s} x {j['label']:24s} -> {j['device']}"
+        assert "+" not in j["run_id"] or not isinstance(j["predictor"], str)
+
+    # round-robin still assigns distinct devices
+    assert [j["device"] for j in jobs] == ["cuda:0", "cuda:1"]
+    # run dirs stay unique and filesystem-safe per (symbol, predictor)
+    assert len({j["run_id"] for j in jobs}) == 2
+    print("  PASS multivariate predictors survive job build + listing")
+
+
+def test_stage3_listing_format_sites_use_label():
+    """Neither run surface may apply a format spec to the raw predictor."""
+    import json as _json
+
+    root = Path(__file__).resolve().parent.parent
+    script = (root / "scripts" / "run_april.py").read_text()
+    nb = _json.loads((root / "april_run.ipynb").read_text())
+    notebook = "\n".join("".join(c["source"]) for c in nb["cells"]
+                         if c["cell_type"] == "code")
+    for name, src in (("run_april.py", script), ("april_run.ipynb", notebook)):
+        assert "j['predictor']:" not in src, (
+            f"{name} formats the raw predictor (breaks on list predictors)")
+        assert 'j["predictor"]:' not in src, (
+            f"{name} formats the raw predictor (breaks on list predictors)")
+    print("  PASS stage-3 listings format the label, not the raw predictor")
+
+
 if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore")
@@ -253,6 +321,8 @@ if __name__ == "__main__":
                test_cache_key, test_parse_hhmm,
                test_legacy_imports_side_effect_free, test_model_registry,
                test_multivariate_predictor, test_asset_paths,
-               test_no_dead_knobs, test_training_knobs_reach_the_trainer]:
+               test_no_dead_knobs, test_training_knobs_reach_the_trainer,
+               test_training_jobs_handle_multivariate_predictors,
+               test_stage3_listing_format_sites_use_label]:
         fn()
     print("ALL UNIT TESTS PASSED")
