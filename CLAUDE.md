@@ -107,28 +107,37 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 - `april_smoke.ipynb` — 1-day plumbing check of every April stage; expected
   counts derived from the config. Run before `april_run.ipynb`.
 
-## Current state (2026-07-16)
+## Current state (2026-07-20)
 
-- PRs #1–#6 all merged into `dev`; no open feature branches. Branch picture:
-  `main` (locked, frozen baseline) + `dev` (everything). All equivalence
-  suites user-run and PASSED before their merges.
-- The April experiment is ready to run on the compute box:
+- PRs #1–#6 all merged into `dev`; no open feature branches besides #7/#8
+  (below). Branch picture: `main` (locked, frozen baseline) + `dev`
+  (everything). All equivalence suites user-run and PASSED before their
+  merges.
+- The April experiment now covers **NVDA, INTC, and IBM**:
   `april_smoke.ipynb` first, then `april_run.ipynb` (Linux params baked in:
-  workers=0, ensemble on). Per symbol: 10 SEQ + 50 CLS-v2 + 20 v2 ENS_TD
-  files + 3 trained Kraus models (2 result files + 4 charts each, sent
-  per-model). Training defaults = original `LearningKraus.main()` values.
+  workers=0, ensemble on) or `scripts/run_april.py`. Per symbol: 10 SEQ +
+  50 CLS-v2 + 20 v2 ENS_TD files + 3 trained Kraus models (2 result files +
+  4 charts each, sent per-model) — 9 models total across the three symbols.
+  Training defaults = original `LearningKraus.main()` values. NVDA/INTC
+  read from `data/NVDA_INTC` (interleaved, filtered per symbol); IBM reads
+  from its own `data/IBM` directory, resolved via `data.asset_paths`.
+  **`data/IBM` does not exist on this Mac yet** — config generation for
+  IBM will raise `FileNotFoundError` until the directory is populated
+  (on this machine or the compute box).
 - Ensemble v2 (`ensemble_training_data_2.py`, PR #6) is integrated, is the
   default, and its byte-equivalence harness PASSED (user-run, 1 day).
 - Multivariate Kraus (`LearningKraus_multivariate.py`, PR #7) is integrated:
-  list predictors in distributions/training, his file naming, harness
-  `tests/verify_multivariate_seq.py` — awaiting the user's harness run.
-  Training on the 256-symbol alphabet (m·d² = 256·64² complex params) is a
-  compute-box job, not a Mac job.
+  list predictors in distributions/training, his file naming.
+  `tests/verify_multivariate_seq.py` **PASSED** (user-run) — open, ready to
+  merge. Training on the 256-symbol alphabet (m·d² = 256·64² complex
+  params) is a compute-box job, not a Mac job.
 - Per-asset data paths (PR #8, stacked on #7): `data.asset_paths` +
   `DataConfig.resolved_data_path()`; `configs/default.yaml` carries the
-  four-asset catalog (NVDA/INTC → NVDA_INTC, AAPL, IBM). `data/AAPL` and
-  `data/IBM` do not exist locally yet — config validation stays cheap and
-  does not check the directories.
+  four-asset catalog (NVDA/INTC → NVDA_INTC, AAPL, IBM). `scripts/run_april.py`
+  and both April notebooks now resolve each symbol's directory from this
+  catalog (`--asset-path SYMBOL=DIR` / `ASSET_PATH_OVERRIDES` to override).
+  `data/AAPL` and `data/IBM` do not exist locally yet — config validation
+  stays cheap and does not check the directories.
 - `tests/baseline_manifest.json` not yet minted — first full
   `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
 

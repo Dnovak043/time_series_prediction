@@ -84,7 +84,7 @@ channel pairs it with several at once); it appears in every filename.
 | `TrainingDistributions/integrate_day_distributions.py` | Merges per-day counts into monthly aggregates (pure dict math). |
 | `TrainingDistributions/plot_distributions.py` | Chart helpers; `plotDistributions` draws in chunks of 62 → the characteristic 4 charts per trained model. |
 | `LearningKraus.py` | The Kraus model + training loop (guarded original script). `pipeline/models.py` and the April harness call `train()` with explicit parameters. The colleague's `LearningKraus_multivariate.py` has byte-identical library code (only its driver differs: 256-symbol joint alphabet, n_qubits 6), so the multivariate trainer imports this same module — no second vendored copy. |
-| `april_run.ipynb` / `scripts/run_april.py` | The current flagship experiment (notebook and identical CLI): both symbols, all April, full spec — see §5. |
+| `april_run.ipynb` / `scripts/run_april.py` | The current flagship experiment (notebook and identical CLI): NVDA, INTC, and IBM, all April, full spec — see §5. |
 | `april_smoke.ipynb` | 1-day plumbing check of every April stage; run before the real thing. |
 | `pipeline_control.ipynb` | The interactive control panel (all knobs, launch/monitor, results plots). |
 | `compare_main_vs_dev.ipynb` | Visual/hash comparison of frozen-baseline outputs vs current outputs. |
@@ -184,11 +184,13 @@ python -m ipykernel install --user --name tsp
   `april_smoke.ipynb` (1-day pass through every stage, ~15 min).
 - **The April experiment**: `april_run.ipynb` (Run All) or
   `nohup python scripts/run_april.py --workers 0 --with-ensemble &`.
-  It prints the complete generated YAML for both symbols before running
+  It prints the complete generated YAML for all three symbols before running
   (that printout is the authoritative parameter record), then per symbol:
   distributions (10 predictors × 5 classes), ensemble tables (v2: 3
   bivariate + 1 joint channel, 5 lengths × 4 classes = 20 files), and the
-  3 Kraus trainings with per-model READY-TO-SEND bundles.
+  3 Kraus trainings with per-model READY-TO-SEND bundles. NVDA and INTC
+  read from `data/NVDA_INTC` (interleaved, filtered per symbol); IBM reads
+  from its own `data/IBM` — resolved per symbol via `data.asset_paths`.
 - **Interactive**: `pipeline_control.ipynb` — every knob, detached
   launches that survive SSH drops, live monitoring, results plots.
 - **Anything ad hoc**: `python -m pipeline init-config run.yaml`, edit, then

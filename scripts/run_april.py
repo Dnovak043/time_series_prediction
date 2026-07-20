@@ -1,18 +1,25 @@
 # -*- coding: utf-8 -*-
 """
 From-zero April run for the boss's request: every April-2025 trading day,
-INTC and NVDA, 3 predictors each = 6 models, 6x2 result files, 6x4 images.
+NVDA, INTC, and IBM, 3 predictors each = 9 models, 9x2 result files, 9x4
+images.
+
+Each symbol reads from its own raw-data directory (`data.asset_paths` in
+`configs/default.yaml`): NVDA and INTC share `data/NVDA_INTC` (interleaved),
+IBM has its own `data/IBM`.
 
 Stages (each skippable):
 
-  1. generate configs/april_nvda.yaml + configs/april_intc.yaml
-     - dates: every xnas-itch-202504*.dbn.zst present in data/ (21 days)
+  1. generate configs/april_{nvda,intc,ibm}.yaml
+     - dates: every xnas-itch-202504*.dbn.zst present in each symbol's
+       resolved data directory (21 days for NVDA_INTC)
      - predictors: tvi_n, obi_L1, ofi_L1_n_norm (features_list[1..3])
-     - instrument_filter: true  <-- REQUIRED for per-symbol runs: the raw
-       files carry NVDA+INTC interleaved and the legacy path never filtered
+     - instrument_filter: true  <-- REQUIRED: NVDA_INTC carries NVDA+INTC
+       interleaved and the legacy path never filtered; harmless no-op on a
+       single-symbol directory like data/IBM (already just that ticker).
   2. distribution runs (featurize -> encode -> SEQ/CLS pickles), one per
      symbol, day-parallel -> outputs/april/{SYMBOL}/
-  3. six trainings via the verbatim-main() harness
+  3. nine trainings via the verbatim-main() harness
      (tests/train_kraus_baseline.run_one) -> outputs/april/{SYMBOL}/models/
      After EACH model a "READY TO SEND" block lists exactly the 2 result
      files + 4 images for that model, so results can be forwarded as they
@@ -51,7 +58,7 @@ matplotlib.use("Agg")
 import pipeline  # noqa: E402,F401
 from pipeline.config import RunConfig  # noqa: E402
 
-SYMBOLS = ["NVDA", "INTC"]
+SYMBOLS = ["NVDA", "INTC", "IBM"]
 PREDICTED = "log_mid"   # features[0] in BOTH colleague files: every output
                         # is a bivariate (log_mid, predictor) pair
 PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # TRAINING (boss's 3 models/symbol)
@@ -62,18 +69,30 @@ DIST_PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n", "ofi_L1_n_norm",
 CLS_NAMES = ["c1", "c2", "c4", "ca2", "ca4"]        # one CLS file per class
 MONTH = "202504"
 
+# single source of truth for "which directory holds which asset's raw
+# files" — the same mapping the pipeline itself uses
+# (DataConfig.asset_paths, RunConfig.resolved_data_path()); several assets
+# may share one directory (NVDA_INTC carries both NVDA and INTC interleaved)
+ASSET_CATALOG = RunConfig.load(ROOT / "configs" / "default.yaml").data.asset_paths
 
-def find_data_dir() -> Path:
-    local = ROOT / "data/NVDA_INTC"
+
+def find_data_dir(symbol: str) -> Path:
+    rel = ASSET_CATALOG.get(symbol)
+    if rel is None:
+        raise KeyError(f"no data/ directory known for symbol {symbol!r}; "
+                       f"add it to data.asset_paths in configs/default.yaml "
+                       f"(known: {sorted(ASSET_CATALOG)})")
+    local = ROOT / rel
     if local.exists():
         return local
     common = subprocess.run(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
-    candidate = Path(common).parent / "data/NVDA_INTC"
+    candidate = Path(common).parent / rel
     if candidate.exists():
         return candidate
-    raise FileNotFoundError(f"raw data not found at {local} or {candidate}")
+    raise FileNotFoundError(f"raw data for {symbol} not found at {local} "
+                            f"or {candidate}")
 
 
 def detect_pattern(data_dir: Path) -> str:
@@ -148,30 +167,49 @@ def main():
                          "(4 is Mac-RAM-safe; 0 = one per core on the box)")
     ap.add_argument("--skip-distributions", action="store_true")
     ap.add_argument("--only-distributions", action="store_true")
-    ap.add_argument("--data-dir", default=None,
-                    help="directory containing the raw xnas-itch-* files "
-                         "(the NVDA_INTC folder). Default: auto-discover "
-                         "data/NVDA_INTC in/near the repo.")
+    ap.add_argument("--asset-path", action="append", default=[],
+                    metavar="SYMBOL=DIR",
+                    help="override the raw-data directory for one symbol "
+                         "(repeatable), e.g. --asset-path IBM=data/IBM. "
+                         "Default: configs/default.yaml's data.asset_paths "
+                         "catalog, auto-discovered in/near the repo.")
     ap.add_argument("--with-ensemble", action="store_true",
                     help="also build the fixed-length ENS_TD_* ensemble "
                          "tables per symbol (25 files each; colleague's "
                          "experiment)")
     args = ap.parse_args()
 
-    data_dir = Path(args.data_dir).resolve() if args.data_dir else find_data_dir()
-    if not data_dir.is_dir():
-        sys.exit(f"data dir not found: {data_dir}")
-    pattern = detect_pattern(data_dir)
-    dates = april_dates(data_dir, pattern)
-    print(f"data: {data_dir}  (pattern: {pattern})\nApril days: {len(dates)} "
-          f"({dates[0]}..{dates[-1]})")
+    for override in args.asset_path:
+        symbol, _, rel = override.partition("=")
+        if not symbol or not rel:
+            sys.exit(f"--asset-path expects SYMBOL=DIR, got {override!r}")
+        ASSET_CATALOG[symbol] = rel
 
-    configs = {s: make_config(s, data_dir, dates, args.workers,
-                              None, pattern,   # None -> DIST_PREDICTORS
-                              epochs=args.epochs, n_qubits=args.n_qubits,
-                              seed=-1 if args.seed is None else args.seed,
-                              train_predictors=args.predictors)
-               for s in args.symbols}
+    # each symbol resolves its own data directory (NVDA/INTC share
+    # NVDA_INTC; IBM has its own) — resolve once per distinct directory
+    resolved: dict[str, Path] = {}
+    for symbol in args.symbols:
+        data_dir = find_data_dir(symbol)
+        if not data_dir.is_dir():
+            sys.exit(f"data dir not found for {symbol}: {data_dir}")
+        resolved[symbol] = data_dir
+
+    configs = {}
+    scope_by_dir: dict[Path, tuple[str, list[str]]] = {}
+    for symbol, data_dir in resolved.items():
+        if data_dir not in scope_by_dir:
+            pattern = detect_pattern(data_dir)
+            dates = april_dates(data_dir, pattern)
+            scope_by_dir[data_dir] = (pattern, dates)
+            print(f"data: {data_dir}  (pattern: {pattern})  April days: "
+                  f"{len(dates)} ({dates[0]}..{dates[-1]})")
+        pattern, dates = scope_by_dir[data_dir]
+        configs[symbol] = make_config(
+            symbol, data_dir, dates, args.workers,
+            None, pattern,   # None -> DIST_PREDICTORS
+            epochs=args.epochs, n_qubits=args.n_qubits,
+            seed=-1 if args.seed is None else args.seed,
+            train_predictors=args.predictors)
 
     # ---- stage 2: distributions -------------------------------------------------
     if not args.skip_distributions:
