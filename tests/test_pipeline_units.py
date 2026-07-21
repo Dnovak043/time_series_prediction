@@ -574,6 +574,36 @@ def test_stage3_schedule_comes_from_the_config():
             jobs, n_par = plan_training(generate("none", 0))
             assert {j["device"] for j in jobs} == {"cpu"} and n_par == 1
 
+            # training.predictors is documented "empty = all of
+            # distributions.predictors"; train_all honours that, and the
+            # fan-out iterating it directly meant empty == train NOTHING,
+            # reported as "All 0 models done" (it also broke the smoke
+            # notebook, whose config sets `predictor` but not `predictors`)
+            bare = {}
+            for sym in ("NVDA", "INTC"):
+                c = RunConfig()
+                c.data.symbol = sym
+                c.data.dates = ["20250401"]
+                c.distributions.predictors = ["tvi_n", "obi_L1"]
+                c.training.predictor = "tvi_n"      # note: predictors unset
+                bare[sym] = c.save(Path(d) / f"bare_{sym}.yaml")
+            jobs, _ = plan_training(bare)
+            assert len(jobs) == 4, jobs              # 2 symbols x 2 fallback
+            assert {j["predictor"] for j in jobs} == {"tvi_n", "obi_L1"}
+
+            # ...but genuinely nothing to train is an error, never a
+            # silent zero-model success
+            nothing = RunConfig()
+            nothing.data.dates = ["20250401"]
+            nothing.distributions.predictors = []
+            nothing.training.predictors = []
+            nothing.training.predictor = "tvi_n"
+            try:
+                plan_training({"NVDA": nothing.save(Path(d) / "none.yaml")})
+                raise AssertionError("empty predictor set accepted")
+            except ValueError as e:
+                assert "no trainings to run" in str(e), e
+
             # an empty set is a named error, not StopIteration
             try:
                 plan_training({})

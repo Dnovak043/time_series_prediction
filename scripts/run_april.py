@@ -239,6 +239,10 @@ def plan_training(configs: dict) -> tuple:
     first = next(iter(loaded.values())).training
     gpus = visible_gpu_ids(first.gpus)
     jobs = build_training_jobs(configs, gpus, loaded=loaded)
+    if not jobs:
+        raise ValueError(
+            "no trainings to run: every config has empty training.predictors "
+            "and empty distributions.predictors. Set one of them.")
     n_par = first.max_parallel or (len(gpus) or 1)
     return jobs, max(1, min(n_par, len(jobs) or 1))
 
@@ -258,7 +262,12 @@ def build_training_jobs(configs: dict, gpus: list | None = None,
     jobs = []
     for symbol, cfg_path in configs.items():
         cfg = (loaded or {}).get(symbol) or RunConfig.load(cfg_path)
-        for predictor in cfg.training.predictors:
+        # training.predictors is documented as "empty = train all of
+        # distributions.predictors" and pipeline.parallel.train_all honours
+        # that; iterating it directly made an empty list silently mean
+        # "train nothing"
+        for predictor in (list(cfg.training.predictors)
+                          or list(cfg.distributions.predictors)):
             device = f"cuda:{gpus[len(jobs) % len(gpus)]}" if gpus else "cpu"
             # a multivariate predictor is a list; `label` is the printable
             # '+'-joined form (predictor_key), so every display/format site
