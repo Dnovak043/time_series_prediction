@@ -439,6 +439,95 @@ def test_choices_are_validated():
     print("  PASS choices validated in config, not at widget-construction")
 
 
+def test_chart_capture_is_concurrency_safe():
+    """Concurrent in-process trainings must each get their own complete,
+    correctly-named set of PNGs.
+
+    Regression: capture rebound the module-global plt.show inline, which
+    was safe only because trainings happened to run in separate processes.
+    Two threads would have shared one binding, interleaved figures into
+    each other's filenames, and restored the original show out of order.
+    Threads are the natural next step for a launch-latency-bound workload,
+    and TRAIN_PARALLEL above the GPU count invites exactly that.
+    """
+    import threading
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from pipeline.models import capture_plots_as_png
+
+    n_threads, n_figs = 6, 4
+    results, errors = {}, []
+    show_before = plt.show
+
+    def draw(marker):
+        for _ in range(n_figs):
+            plt.figure()
+            plt.plot([0, 1], [marker, marker])
+            plt.show()          # intercepted
+
+    def worker(i, out_dir):
+        try:
+            results[i] = capture_plots_as_png(
+                Path(out_dir) / f"model{i}", 60, lambda: draw(i))
+        except Exception as e:                       # noqa: BLE001
+            errors.append(e)
+
+    with tempfile.TemporaryDirectory() as d:
+        threads = [threading.Thread(target=worker, args=(i, d))
+                   for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, errors
+        assert len(results) == n_threads, sorted(results)
+        for i, paths in results.items():
+            # each thread got its own complete set, numbered from 1...
+            assert len(paths) == n_figs, (i, paths)
+            expected = [str(Path(d) / f"model{i}_{k}.png")
+                        for k in range(1, n_figs + 1)]
+            assert paths == expected, (i, paths)
+            # ...and no other thread's figures leaked into its filenames
+            for p in paths:
+                assert Path(p).exists() and Path(p).stat().st_size > 0, p
+        # every file across all threads is distinct
+        every = [p for paths in results.values() for p in paths]
+        assert len(set(every)) == len(every)
+
+    # plt.show restored exactly once, not left pointing at an interceptor
+    assert plt.show is show_before, "plt.show was not restored"
+    print(f"  PASS chart capture safe across {n_threads} concurrent threads")
+
+
+def test_chart_capture_leaves_caller_state_alone():
+    """Capture must not close the caller's figures or change the backend."""
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    from pipeline.models import capture_plots_as_png
+
+    backend_before = matplotlib.get_backend()
+    caller_fig = plt.figure()          # a figure the "notebook" owns
+    caller_num = caller_fig.number
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            paths = capture_plots_as_png(
+                Path(d) / "m", 60,
+                lambda: [plt.figure(), plt.plot([0, 1]), plt.show()])
+            assert len(paths) == 1, paths
+        assert caller_num in plt.get_fignums(), \
+            "capture closed a figure it did not open"
+        assert matplotlib.get_backend() == backend_before, \
+            "capture changed the caller's matplotlib backend"
+    finally:
+        plt.close(caller_num)
+    print("  PASS chart capture leaves caller figures/backend untouched")
+
+
 def test_stage3_schedule_comes_from_the_config():
     """GPU selection and concurrency must be read from the config.
 
@@ -520,6 +609,8 @@ if __name__ == "__main__":
                test_training_jobs_handle_multivariate_predictors,
                test_stage3_listing_format_sites_use_label,
                test_stage3_schedule_comes_from_the_config,
+               test_chart_capture_is_concurrency_safe,
+               test_chart_capture_leaves_caller_state_alone,
                test_device_cuda_index_loads_in_control_panel,
                test_device_chooser_offers_only_real_devices,
                test_panel_save_reports_invalid_config,

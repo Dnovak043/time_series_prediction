@@ -15,12 +15,62 @@ from __future__ import annotations
 
 import datetime
 import pickle
+import threading
 from pathlib import Path
 
 from . import REPO_ROOT
 from .config import RunConfig, predictor_key
 
 REGISTRY: dict[str, callable] = {}
+
+# pyplot is a process-global state machine, so the show-interception below
+# is serialised. Separate processes each get their own lock and their own
+# pyplot, so the GPU fan-out is unaffected either way.
+_CHART_LOCK = threading.RLock()
+
+
+def capture_plots_as_png(fig_base, dpi: int, draw) -> list[str]:
+    """Run `draw()` and save every figure it would have shown, returning the
+    PNG paths in draw order (`{fig_base}_1.png`, `_2.png`, ...).
+
+    `LearningKraus.plotDistributions` renders in chunks and calls
+    `plt.show()` once per chunk; intercepting `show` is the only way to
+    capture those without editing vendored code.
+
+    Three things make this safe for any scheduling:
+
+    * **Concurrency** — the interception is held under a lock. Without it
+      two in-process trainings (threads) would share one `plt.show`
+      binding, interleave their figures into each other's filenames, and
+      restore the original `show` out of order.
+    * **The caller's figures** — only figures opened by `draw()` are
+      closed. A blanket `plt.close("all")` would discard figures the
+      calling notebook had open.
+    * **The caller's backend** — deliberately not modified. Because the
+      real `show` is never called no window can open, so forcing "Agg" (a
+      process-global change that silently breaks a notebook's inline
+      plotting for the rest of its session) is unnecessary.
+    """
+    import matplotlib.pyplot as plt
+
+    paths: list[str] = []
+    with _CHART_LOCK:
+        pre_existing = set(plt.get_fignums())
+
+        def _save_instead_of_show(*_a, **_k):
+            paths.append(f"{fig_base}_{len(paths) + 1}.png")
+            plt.savefig(paths[-1], dpi=dpi, bbox_inches="tight")
+            plt.close()
+
+        original_show = plt.show
+        plt.show = _save_instead_of_show
+        try:
+            draw()
+        finally:
+            plt.show = original_show
+            for num in set(plt.get_fignums()) - pre_existing:
+                plt.close(num)
+    return paths
 
 
 def register_model(name: str):
@@ -184,31 +234,17 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     # so this is the single trainer that produces the full per-model bundle.
     fig_paths: list[str] = []
     if t.plot_entries > 0:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
         fig_base = model_dir / (
             f"{cfg.data.symbol}_{cfg.data.dates[0][:6]}_"
             f"{cfg.distributions.predicted}-{chart_tag}_"
             f"{t.n_qubits}q")
         n = t.plot_entries
-
-        def _save_instead_of_show(*a, **k):
-            fig_paths.append(f"{fig_base}_{len(fig_paths) + 1}.png")
-            plt.savefig(fig_paths[-1], dpi=t.plot_dpi,
-                        bbox_inches="tight")
-            plt.close()
-
-        orig_show = plt.show
-        plt.show = _save_instead_of_show
-        try:
-            lk.plotDistributions(emp_probs[:n], p_model[:n], sequences[:n],
-                                 f"{base} Cost={total_loss}",
-                                 "Target", "Model", c1="blue", c2="red")
-        finally:
-            plt.show = orig_show
-            plt.close("all")
+        fig_paths = capture_plots_as_png(
+            fig_base, t.plot_dpi,
+            lambda: lk.plotDistributions(
+                emp_probs[:n], p_model[:n], sequences[:n],
+                f"{base} Cost={total_loss}",
+                "Target", "Model", c1="blue", c2="red"))
 
     with open(mod_path, "wb") as fh:
         pickle.dump([model, sequences, emp_probs], fh)
