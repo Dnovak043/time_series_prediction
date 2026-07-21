@@ -288,7 +288,8 @@ def test_training_jobs_handle_multivariate_predictors():
         # the exact format spec used by the stage-3 job listing, in both
         # run_april.py and april_run.ipynb — this is what used to raise
         f"    {j['symbol']:6s} x {j['label']:24s} -> {j['device']}"
-        assert "+" not in j["run_id"] or not isinstance(j["predictor"], str)
+        # the '+' tag appears iff the predictor is multivariate
+        assert ("+" in j["run_id"]) == isinstance(j["predictor"], list)
 
     # round-robin still assigns distinct devices
     assert [j["device"] for j in jobs] == ["cuda:0", "cuda:1"]
@@ -545,7 +546,7 @@ def test_stage3_schedule_comes_from_the_config():
     root = Path(__file__).resolve().parent.parent
     _sys.path.insert(0, str(root / "scripts"))
     import run_april
-    from run_april import build_training_jobs, make_config, training_schedule
+    from run_april import build_training_jobs, make_config, plan_training
 
     with tempfile.TemporaryDirectory() as d:
         original_root, run_april.ROOT = run_april.ROOT, Path(d)
@@ -561,21 +562,35 @@ def test_stage3_schedule_comes_from_the_config():
             # an explicit GPU list reaches the scheduler
             paths = generate("0,2", 0)
             assert RunConfig.load(paths["NVDA"]).training.gpus == "0,2"
-            gpus, n_par = training_schedule(paths)
-            assert gpus == ["0", "2"], gpus
-            jobs = build_training_jobs(paths, gpus)
+            jobs, n_par = plan_training(paths)
             assert sorted({j["device"] for j in jobs}) == ["cuda:0", "cuda:2"]
             assert n_par == 2, n_par        # one per selected GPU
 
             # explicit concurrency wins over the GPU count
-            gpus, n_par = training_schedule(generate("0,2", 1))
+            _, n_par = plan_training(generate("0,2", 1))
             assert n_par == 1, n_par
 
             # 'none' forces CPU scheduling regardless of hardware
-            gpus, n_par = training_schedule(generate("none", 0))
-            assert gpus == [] and n_par == 1
-            jobs = build_training_jobs(generate("none", 0), gpus)
-            assert {j["device"] for j in jobs} == {"cpu"}
+            jobs, n_par = plan_training(generate("none", 0))
+            assert {j["device"] for j in jobs} == {"cpu"} and n_par == 1
+
+            # an empty set is a named error, not StopIteration
+            try:
+                plan_training({})
+                raise AssertionError("empty configs accepted")
+            except ValueError as e:
+                assert "nothing to train" in str(e), e
+
+            # configs that disagree on the schedule are reported, not
+            # silently resolved to whichever happens to be first
+            mixed = dict(generate("auto", 0))
+            mixed["INTC"] = make_config("INTC", Path(d), ["20250401"], 0,
+                                        epochs=5, gpus="none", max_parallel=0)
+            try:
+                plan_training(mixed)
+                raise AssertionError("disagreeing configs accepted")
+            except ValueError as e:
+                assert "disagree" in str(e), e
         finally:
             run_april.ROOT = original_root
     print("  PASS stage-3 schedule is read from training.gpus/max_parallel")

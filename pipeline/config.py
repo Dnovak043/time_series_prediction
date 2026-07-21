@@ -12,6 +12,7 @@ Defaults reproduce the hardcoded values of the original scripts exactly.
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -26,8 +27,6 @@ def _validate_device(device) -> list[str]:
     """training.device is free-form: the presets, or an indexed accelerator
     like 'cuda:3' / 'mps:0'. Anything else is a typo that would otherwise
     surface only when torch failed mid-training."""
-    import re
-
     if not isinstance(device, str):
         return [f"training.device {device!r} must be a string"]
     if device in _DEVICE_PRESETS:
@@ -47,8 +46,11 @@ def predictor_key(predictor) -> str:
     return "+".join(predictor)
 
 
+_VALIDATORS = {"device": _validate_device}
+
+
 def _f(default, help="", choices=None, advanced=False, free_form=False,
-       options_provider=None, **kw):
+       options_provider=None, validator=None, **kw):
     """free_form=True: `choices` are the common presets, but other values are
     legal too (validated by RunConfig.validate). The control panel renders
     such a field as the preset dropdown *plus* a second chooser, so e.g.
@@ -58,7 +60,12 @@ def _f(default, help="", choices=None, advanced=False, free_form=False,
     enumerates the extra values for that second chooser (e.g. 'devices' ->
     the accelerators present on this machine). With a provider the second
     chooser is a dropdown, so only real values can be picked; without one it
-    falls back to a free-text box."""
+    falls back to a free-text box.
+
+    validator: name of a checker registered in _VALIDATORS, applied by
+    RunConfig.validate. A free_form field SHOULD declare one — without it
+    the field accepts anything, which is the hole `choices` normally
+    closes."""
     md = {"help": help}
     if choices:
         md["choices"] = choices
@@ -66,6 +73,11 @@ def _f(default, help="", choices=None, advanced=False, free_form=False,
         md["free_form"] = True
     if options_provider:
         md["options_provider"] = options_provider
+    if validator:
+        if validator not in _VALIDATORS:
+            raise ValueError(f"unknown validator {validator!r}; "
+                             f"registered: {sorted(_VALIDATORS)}")
+        md["validator"] = validator
     if advanced:
         md["advanced"] = True
     if callable(default):
@@ -319,7 +331,7 @@ class TrainingConfig:
                              "already names (configs are portable between the "
                              "Mac and the compute box).",
                      choices=["auto", "cuda", "cpu", "mps"], free_form=True,
-                     options_provider="devices")
+                     options_provider="devices", validator="device")
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
@@ -441,13 +453,23 @@ class RunConfig:
         for stage_name in STAGES:
             stage_obj = getattr(self, stage_name)
             for info in field_info(stage_obj):
+                if info["validator"]:
+                    problems += [f"{stage_name}.{info['name']}: {p}"
+                                 if not p.startswith(stage_name) else p
+                                 for p in _VALIDATORS[info["validator"]](
+                                     info["value"])]
+                elif info["choices"] and info["free_form"]:
+                    # a free_form field with no validator accepts anything —
+                    # exactly the hole `choices` normally closes
+                    problems.append(
+                        f"{stage_name}.{info['name']} is free_form but "
+                        f"declares no validator")
                 if not info["choices"] or info["free_form"]:
                     continue
                 if info["value"] not in info["choices"]:
                     problems.append(
                         f"{stage_name}.{info['name']} {info['value']!r} is not "
                         f"one of {info['choices']}")
-        problems += _validate_device(self.training.device)
         if not self.data.dates:
             problems.append("data.dates is empty")
         for d in self.data.dates:
@@ -509,6 +531,7 @@ def field_info(stage_obj) -> list[dict[str, Any]]:
             "choices": f.metadata.get("choices"),
             "free_form": f.metadata.get("free_form", False),
             "options_provider": f.metadata.get("options_provider"),
+            "validator": f.metadata.get("validator"),
             "advanced": f.metadata.get("advanced", False),
         })
     return out

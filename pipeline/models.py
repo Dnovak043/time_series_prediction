@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import pickle
 import threading
+import time
 from pathlib import Path
 
 from . import REPO_ROOT
@@ -177,8 +178,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
             progress.update(stage="training", pct=100.0 * ep / total,
                             message=f"epoch {ep}/{total} loss {loss:.3e}")
 
-    import time as _time
-    _t0 = _time.time()
+    started = time.time()
     model = lk.train(
         sequences, emp_probs, t.max_seq_len,
         m, t.n_qubits,
@@ -195,7 +195,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         on_epoch=on_epoch,
     )
 
-    train_seconds = _time.time() - _t0
+    train_seconds = time.time() - started
 
     # evaluation + persistence (same artifacts as the original script)
     p_model = lk.predict_probs(model, sequences,
@@ -232,20 +232,10 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     # the default 200. Interactively those are 4 windows; here plt.show is
     # intercepted so each becomes its own PNG. Ported from the April harness
     # so this is the single trainer that produces the full per-model bundle.
-    fig_paths: list[str] = []
-    if t.plot_entries > 0:
-        fig_base = model_dir / (
-            f"{cfg.data.symbol}_{cfg.data.dates[0][:6]}_"
-            f"{cfg.distributions.predicted}-{chart_tag}_"
-            f"{t.n_qubits}q")
-        n = t.plot_entries
-        fig_paths = capture_plots_as_png(
-            fig_base, t.plot_dpi,
-            lambda: lk.plotDistributions(
-                emp_probs[:n], p_model[:n], sequences[:n],
-                f"{base} Cost={total_loss}",
-                "Target", "Model", c1="blue", c2="red"))
-
+    # PERSIST FIRST. Charting is cosmetic; training is hours. Rendering
+    # before the model reached disk meant any plotting error (too few
+    # sequences to slice, a backend fault, a full disk) discarded the whole
+    # run. Now a chart failure costs only the images.
     with open(mod_path, "wb") as fh:
         pickle.dump([model, sequences, emp_probs], fh)
     lk.save_model_weights(
@@ -255,9 +245,35 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
               "loss": total_loss, "epochs": t.epochs,
               "trained": datetime.datetime.now().isoformat(timespec="seconds")})
 
+    fig_paths: list[str] = []
+    chart_error = None
+    if t.plot_entries > 0:
+        fig_base = model_dir / (
+            f"{cfg.data.symbol}_{cfg.data.dates[0][:6]}_"
+            f"{cfg.distributions.predicted}-{chart_tag}_"
+            f"{t.n_qubits}q")
+        n = t.plot_entries
+        try:
+            fig_paths = capture_plots_as_png(
+                fig_base, t.plot_dpi,
+                lambda: lk.plotDistributions(
+                    emp_probs[:n], p_model[:n], sequences[:n],
+                    f"{base} Cost={total_loss}",
+                    "Target", "Model", c1="blue", c2="red"))
+        except Exception as e:  # noqa: BLE001 - the model is already safe
+            # reported, not raised: one model's missing charts must not kill
+            # a sweep whose other trainings are still running
+            chart_error = f"{type(e).__name__}: {e}"
+            print(f"[warning] {mod_path.name}: charts failed ({chart_error}); "
+                  f"model and weights were saved", flush=True)
+            if progress:
+                progress.update(stage="training",
+                                message=f"charts failed: {chart_error}")
+
     result = {"model_file": str(mod_path), "weights_file": str(wghts_path),
               "loss": total_loss, "n_sequences": len(sequences),
               "device": device, "plots": fig_paths,
+              "chart_error": chart_error,
               "symbol": cfg.data.symbol,
               "predictor": predictor_key(t.predictor),
               "train_seconds": round(train_seconds, 1)}

@@ -204,37 +204,60 @@ def _train_one(job: dict) -> dict:
     cfg.training.predictor = job["predictor"]
     cfg.training.device = job["device"]
     r = train_model(cfg, run_id=job["run_id"], repo_root=ROOT)
-    r["device"] = job["device"]
+    # train_model reports the device it actually resolved to; keep that as
+    # the record of what ran and note the request separately, so a silent
+    # fallback can never be reported as success on the requested GPU
+    r["requested_device"] = job["device"]
     return r
 
 
-def training_schedule(configs: dict) -> tuple:
-    """(gpu ids, concurrency) for stage 3, taken from the config.
+def plan_training(configs: dict) -> tuple:
+    """(jobs, concurrency) for stage 3 — one pass over the configs.
 
-    Both come from the generated config — training.gpus and
-    training.max_parallel, the same fields `pipeline train-all` uses — so
-    the schedule is recorded in configs/april_*.yaml and reproducible from
-    it alone. make_config writes them identically for every symbol, so the
-    first one is authoritative.
+    Schedule and jobs are built together so the concurrency can never be
+    clamped against a job count that differs from the list actually run,
+    and so each generated config is read exactly once.
+
+    training.gpus / training.max_parallel come from the config — the same
+    fields `pipeline train-all` uses — so the schedule is recorded in
+    configs/april_*.yaml and reproducible from it alone. make_config writes
+    them identically for every symbol; a disagreement means someone
+    hand-edited one, so it is reported rather than silently first-wins.
     """
-    cfg = RunConfig.load(next(iter(configs.values())))
-    gpus = visible_gpu_ids(cfg.training.gpus)
-    n_jobs = sum(len(RunConfig.load(p).training.predictors)
-                 for p in configs.values())
-    n_par = cfg.training.max_parallel or (len(gpus) or 1)
-    return gpus, max(1, min(n_par, max(1, n_jobs)))
+    if not configs:
+        raise ValueError("no configs to schedule: nothing to train")
+
+    loaded = {s: RunConfig.load(p) for s, p in configs.items()}
+    schedules = {(c.training.gpus, c.training.max_parallel)
+                 for c in loaded.values()}
+    if len(schedules) > 1:
+        raise ValueError(
+            "configs disagree on the stage-3 schedule (training.gpus, "
+            f"training.max_parallel): {sorted(schedules)}. They are "
+            "generated together, so this means one was hand-edited.")
+
+    first = next(iter(loaded.values())).training
+    gpus = visible_gpu_ids(first.gpus)
+    jobs = build_training_jobs(configs, gpus, loaded=loaded)
+    n_par = first.max_parallel or (len(gpus) or 1)
+    return jobs, max(1, min(n_par, len(jobs) or 1))
 
 
-def build_training_jobs(configs: dict, gpus: list | None = None) -> list:
+def build_training_jobs(configs: dict, gpus: list | None = None,
+                        loaded: dict | None = None) -> list:
     """One job per (symbol, training predictor), round-robin across GPUs.
 
     `configs` maps symbol -> generated config path; the training parameters
     are read back from that config, so the jobs stay config-authoritative.
+    `loaded` lets a caller that already parsed those configs avoid re-reading
+    them.
     """
-    gpus = training_schedule(configs)[0] if gpus is None else gpus
+    if gpus is None:
+        gpus = visible_gpu_ids(
+            RunConfig.load(next(iter(configs.values()))).training.gpus)
     jobs = []
     for symbol, cfg_path in configs.items():
-        cfg = RunConfig.load(cfg_path)
+        cfg = (loaded or {}).get(symbol) or RunConfig.load(cfg_path)
         for predictor in cfg.training.predictors:
             device = f"cuda:{gpus[len(jobs) % len(gpus)]}" if gpus else "cpu"
             # a multivariate predictor is a list; `label` is the printable
@@ -382,28 +405,35 @@ def main():
     results = []
 
     train_configs = {s: configs[s] for s in args.symbols}
-    gpus, n_par = training_schedule(train_configs)   # from the CONFIG
-    jobs = build_training_jobs(train_configs, gpus)
+    jobs, n_par = plan_training(train_configs)       # from the CONFIG
+    devices = sorted({j["device"] for j in jobs})
 
-    t0cfg = RunConfig.load(configs[args.symbols[0]]).training
-    print(f"\n=== {len(jobs)} models | {len(gpus) or 'no'} GPU(s) | "
-          f"{n_par} at a time | epochs={t0cfg.epochs}, {t0cfg.n_qubits}q, "
-          f"batch={t0cfg.batch_size}, lr={t0cfg.lr}, "
-          f"{t0cfg.optimizer}/{t0cfg.loss_kind}, "
-          f"seed={'unseeded' if t0cfg.seed < 0 else t0cfg.seed} ===")
+    print(f"\n=== {len(jobs)} models | {len(devices)} device(s) | "
+          f"{n_par} at a time ===")
+    # per-model hyperparameters, not one symbol's standing in for all nine
     for j in jobs:
-        print(f"    {j['symbol']:6s} x {j['label']:24s} -> {j['device']}")
+        t = RunConfig.load(j["config"]).training
+        print(f"    {j['symbol']:6s} x {j['label']:24s} -> {j['device']}"
+              f"  (epochs={t.epochs}, {t.n_qubits}q, batch={t.batch_size}, "
+              f"lr={t.lr}, {t.optimizer}/{t.loss_kind}, "
+              f"seed={'unseeded' if t.seed < 0 else t.seed})")
 
     for i, r in enumerate(run_training_jobs(jobs, n_par), 1):
         results.append(r)
         summary_path.write_text(json.dumps(results, indent=1))
+        ran_on = r["device"]
+        if r.get("requested_device") not in (None, ran_on):
+            ran_on = f"{ran_on} (requested {r['requested_device']})"
         print(f"\n>>> MODEL {i}/{len(jobs)} COMPLETE — "
-              f"{r['symbol']} x {r['predictor']} on {r['device']} — "
+              f"{r['symbol']} x {r['predictor']} on {ran_on} — "
               f"READY TO SEND:")
         print(f"    result file 1: {r['model_file']}")
         print(f"    result file 2: {r['weights_file']}")
         for j2, png in enumerate(r["plots"], 1):
             print(f"    image {j2}:       {png}")
+        if r.get("chart_error"):
+            print(f"    NOTE: charts failed ({r['chart_error']}); "
+                  f"model + weights above are complete")
         print(f"    cost={r['loss']:.3e}  ({r['train_seconds']:.0f}s)")
 
     print(f"\nAll {len(jobs)} models done. Summary: {summary_path}")
