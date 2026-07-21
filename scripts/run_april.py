@@ -19,8 +19,9 @@ Stages (each skippable):
        single-symbol directory like data/IBM (already just that ticker).
   2. distribution runs (featurize -> encode -> SEQ/CLS pickles), one per
      symbol, day-parallel -> outputs/april/{SYMBOL}/
-  3. nine trainings via the verbatim-main() harness
-     (tests/train_kraus_baseline.run_one) -> outputs/april/{SYMBOL}/models/
+  3. nine trainings via the pipeline's registered trainer (pipeline.models,
+     the same path as `python -m pipeline train`), fanned one per GPU
+     -> outputs/april/{SYMBOL}/models/
      After EACH model a "READY TO SEND" block lists exactly the 2 result
      files + 4 images for that model, so results can be forwarded as they
      complete. Progress persists in outputs/april/april_summary.json.
@@ -56,7 +57,7 @@ import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 
 import pipeline  # noqa: E402,F401
-from pipeline.config import RunConfig  # noqa: E402
+from pipeline.config import RunConfig, predictor_key  # noqa: E402
 
 SYMBOLS = ["NVDA", "INTC", "IBM"]
 PREDICTED = "log_mid"   # features[0] in BOTH colleague files: every output
@@ -121,7 +122,10 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
                 workers: int, predictors: list[str] | None = None,
                 file_pattern: str | None = None, epochs: int = 3000,
                 n_qubits: int = 3, seed: int = -1,
-                train_predictors: list[str] | None = None) -> Path:
+                train_predictors: list[str] | None = None,
+                predicted: str | None = None,
+                cls_names: list[str] | None = None,
+                gpus: str = "auto", max_parallel: int = 0) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -132,9 +136,9 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # colleague's new process_distributions spec: 10 predictors (superset of
     # the 3 training predictors -> their SEQ files come out of the same run),
     # v2 multi-class CLS sweep with (-1,0,1) column order
-    cfg.distributions.predicted = PREDICTED
+    cfg.distributions.predicted = predicted or PREDICTED
     cfg.distributions.predictors = list(predictors or DIST_PREDICTORS)
-    cfg.distributions.class_names = list(CLS_NAMES)
+    cfg.distributions.class_names = list(cls_names or CLS_NAMES)
     cfg.distributions.class_values = [-1, 0, 1]
     cfg.distributions.output_dir = f"outputs/april/{symbol}"
     cfg.featurize.workers = workers
@@ -147,11 +151,161 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # the models this experiment trains (boss's 3) — explicit in the config,
     # and what train-all would sweep for this config too
     cfg.training.predictors = list(train_predictors or PREDICTORS)
+    # stage-3 scheduling is a run parameter like any other: it lands in the
+    # generated config, and the fan-out reads it back from there rather than
+    # from a CLI/notebook constant (CLAUDE.md rule 4)
+    cfg.training.gpus = gpus
+    cfg.training.max_parallel = max_parallel
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
     print(f"wrote {path}  ({len(dates)} days, filter ON, workers={workers})")
     return path
+
+
+# ---------------------------------------------------------------------------
+# training fan-out across GPUs
+#
+# The 3-qubit bivariate model is tiny (m=16 operators of d=8, ~2k parameters),
+# so a single training occupies only a few percent of an A100 — it is
+# kernel-launch-latency bound, not compute bound. Running the 9 models
+# sequentially therefore leaves 7 of 8 GPUs idle. These helpers dispatch one
+# training per device instead.
+#
+# The trainer is pipeline.models (the model registry) — the same code path
+# as `python -m pipeline train`. Only the cross-symbol scheduling lives here,
+# because `pipeline train-all` sweeps predictors within ONE config and this
+# experiment needs 3 symbols x 3 predictors spread over 8 GPUs.
+# ---------------------------------------------------------------------------
+def visible_gpu_ids(spec: str = "auto") -> list:
+    """GPU ids to schedule on — the pipeline's own discovery, so this and
+    `pipeline train-all` agree on what exists. [] = no CUDA (schedule CPU)."""
+    from pipeline.parallel import visible_gpus
+    return visible_gpus(spec)
+
+
+def _train_one(job: dict) -> dict:
+    """One (symbol, predictor) training pinned to one device.
+
+    Runs the registered pipeline trainer (pipeline.models, via the model
+    registry) — not a test harness. Everything that used to be exclusive to
+    tests/train_kraus_baseline.py (the 4 plotDistributions charts, seeding,
+    the dataloader worker count) now lives in pipeline/models.py, so this is
+    a plain `pipeline train` with training.predictor/device overridden.
+
+    Module-level on purpose: ProcessPoolExecutor's spawn context imports the
+    worker by qualified name, which a notebook-cell closure cannot satisfy.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from pipeline.models import train_model
+
+    cfg = RunConfig.load(job["config"])
+    cfg.training.predictor = job["predictor"]
+    cfg.training.device = job["device"]
+    r = train_model(cfg, run_id=job["run_id"], repo_root=ROOT)
+    # train_model reports the device it actually resolved to; keep that as
+    # the record of what ran and note the request separately, so a silent
+    # fallback can never be reported as success on the requested GPU
+    r["requested_device"] = job["device"]
+    return r
+
+
+def plan_training(configs: dict) -> tuple:
+    """(jobs, concurrency) for stage 3 — one pass over the configs.
+
+    Schedule and jobs are built together so the concurrency can never be
+    clamped against a job count that differs from the list actually run,
+    and so each generated config is read exactly once.
+
+    training.gpus / training.max_parallel come from the config — the same
+    fields `pipeline train-all` uses — so the schedule is recorded in
+    configs/april_*.yaml and reproducible from it alone. make_config writes
+    them identically for every symbol; a disagreement means someone
+    hand-edited one, so it is reported rather than silently first-wins.
+    """
+    if not configs:
+        raise ValueError("no configs to schedule: nothing to train")
+
+    loaded = {s: RunConfig.load(p) for s, p in configs.items()}
+    schedules = {(c.training.gpus, c.training.max_parallel)
+                 for c in loaded.values()}
+    if len(schedules) > 1:
+        raise ValueError(
+            "configs disagree on the stage-3 schedule (training.gpus, "
+            f"training.max_parallel): {sorted(schedules)}. They are "
+            "generated together, so this means one was hand-edited.")
+
+    first = next(iter(loaded.values())).training
+    gpus = visible_gpu_ids(first.gpus)
+    jobs = build_training_jobs(configs, gpus, loaded=loaded)
+    if not jobs:
+        raise ValueError(
+            "no trainings to run: every config has empty training.predictors "
+            "and empty distributions.predictors. Set one of them.")
+    n_par = first.max_parallel or (len(gpus) or 1)
+    return jobs, max(1, min(n_par, len(jobs) or 1))
+
+
+def build_training_jobs(configs: dict, gpus: list | None = None,
+                        loaded: dict | None = None) -> list:
+    """One job per (symbol, training predictor), round-robin across GPUs.
+
+    `configs` maps symbol -> generated config path; the training parameters
+    are read back from that config, so the jobs stay config-authoritative.
+    `loaded` lets a caller that already parsed those configs avoid re-reading
+    them.
+    """
+    if gpus is None:
+        gpus = visible_gpu_ids(
+            RunConfig.load(next(iter(configs.values()))).training.gpus)
+    jobs = []
+    for symbol, cfg_path in configs.items():
+        cfg = (loaded or {}).get(symbol) or RunConfig.load(cfg_path)
+        # training.predictors is documented as "empty = train all of
+        # distributions.predictors" and pipeline.parallel.train_all honours
+        # that; iterating it directly made an empty list silently mean
+        # "train nothing"
+        for predictor in (list(cfg.training.predictors)
+                          or list(cfg.distributions.predictors)):
+            device = f"cuda:{gpus[len(jobs) % len(gpus)]}" if gpus else "cpu"
+            # a multivariate predictor is a list; `label` is the printable
+            # '+'-joined form (predictor_key), so every display/format site
+            # has a string and none of them has to re-handle the list case
+            label = predictor_key(predictor)
+            jobs.append({
+                "symbol": symbol,
+                "predictor": predictor,
+                "label": label,
+                "config": str(cfg_path),
+                "device": device,
+                # own run dir per model: progress.json + config.yaml, so each
+                # training is watchable individually via `pipeline status`
+                "run_id": f"april-train-{symbol}-{label}",
+            })
+    return jobs
+
+
+def run_training_jobs(jobs: list, max_parallel: int = 0):
+    """Yield each finished training as it completes (completion order, not
+    submission order). max_parallel: 0 = one per distinct device (i.e. one
+    per GPU), 1 = sequential (the original behavior), N = N at once."""
+    if max_parallel <= 0:
+        max_parallel = len({j["device"] for j in jobs})
+    max_parallel = max(1, min(max_parallel, len(jobs)))
+
+    if max_parallel == 1:
+        for job in jobs:
+            yield _train_one(job)
+        return
+
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    with ProcessPoolExecutor(max_workers=max_parallel,
+                             mp_context=mp.get_context("spawn")) as ex:
+        futures = [ex.submit(_train_one, j) for j in jobs]
+        for fut in as_completed(futures):
+            yield fut.result()
 
 
 def main():
@@ -173,6 +327,18 @@ def main():
                          "(repeatable), e.g. --asset-path IBM=data/IBM. "
                          "Default: configs/default.yaml's data.asset_paths "
                          "catalog, auto-discovered in/near the repo.")
+    ap.add_argument("--train-parallel", type=int, default=0,
+                    metavar="N", dest="max_parallel",
+                    help="concurrent trainings in stage 3 -> written to the "
+                         "config as training.max_parallel. 0 = auto (one per "
+                         "visible GPU), 1 = sequential, N = exactly N. Each "
+                         "3-qubit model uses only a few percent of an A100, "
+                         "so N above the GPU count is reasonable.")
+    ap.add_argument("--gpus", default="auto",
+                    help="GPUs for stage 3 -> written to the config as "
+                         "training.gpus. 'auto' = every CUDA device torch "
+                         "sees (respects CUDA_VISIBLE_DEVICES), '0,2,5' = "
+                         "those ids, 'none' = force CPU.")
     ap.add_argument("--with-ensemble", action="store_true",
                     help="also build the fixed-length ENS_TD_* ensemble "
                          "tables per symbol (25 files each; colleague's "
@@ -209,7 +375,8 @@ def main():
             None, pattern,   # None -> DIST_PREDICTORS
             epochs=args.epochs, n_qubits=args.n_qubits,
             seed=-1 if args.seed is None else args.seed,
-            train_predictors=args.predictors)
+            train_predictors=args.predictors,
+            gpus=args.gpus, max_parallel=args.max_parallel)
 
     # ---- stage 2: distributions -------------------------------------------------
     if not args.skip_distributions:
@@ -241,43 +408,44 @@ def main():
     if args.only_distributions:
         return
 
-    # ---- stage 3: 6 trainings, send-as-you-go -----------------------------------
-    from train_kraus_baseline import run_one
-
+    # ---- stage 3: trainings, fanned across GPUs, send-as-you-go -----------------
     summary_path = ROOT / "outputs" / "april" / "april_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
     results = []
-    combos = [(s, p) for s in args.symbols
-              for p in RunConfig.load(configs[s]).training.predictors]
-    for i, (symbol, predictor) in enumerate(combos, 1):
-        distr_dir = ROOT / "outputs" / "april" / symbol
-        out_dir = distr_dir / "models"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        t = RunConfig.load(configs[symbol]).training
-        print(f"\n=== MODEL {i}/{len(combos)}: {symbol} x {predictor} "
-              f"(epochs={t.epochs}, {t.n_qubits}q, batch={t.batch_size}, "
+
+    train_configs = {s: configs[s] for s in args.symbols}
+    jobs, n_par = plan_training(train_configs)       # from the CONFIG
+    devices = sorted({j["device"] for j in jobs})
+
+    print(f"\n=== {len(jobs)} models | {len(devices)} device(s) | "
+          f"{n_par} at a time ===")
+    # per-model hyperparameters, not one symbol's standing in for all nine
+    for j in jobs:
+        t = RunConfig.load(j["config"]).training
+        print(f"    {j['symbol']:6s} x {j['label']:24s} -> {j['device']}"
+              f"  (epochs={t.epochs}, {t.n_qubits}q, batch={t.batch_size}, "
               f"lr={t.lr}, {t.optimizer}/{t.loss_kind}, "
-              f"seed={'unseeded' if t.seed < 0 else t.seed}) ===")
-        r = run_one(predictor, distr_dir, out_dir, t.epochs,
-                    None if t.seed < 0 else t.seed,
-                    symbol=symbol, n_qubits=t.n_qubits,
-                    m=RunConfig.load(configs[symbol]).alphabet_size,
-                    max_seq_len=t.max_seq_len, min_seq_prob=t.min_seq_prob,
-                    batch_size=t.batch_size, lr=t.lr,
-                    optimizer_name=t.optimizer, loss_kind=t.loss_kind,
-                    learn_rho0=t.learn_rho0, device=t.device)
+              f"seed={'unseeded' if t.seed < 0 else t.seed})")
+
+    for i, r in enumerate(run_training_jobs(jobs, n_par), 1):
         results.append(r)
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(results, indent=1))
+        ran_on = r["device"]
+        if r.get("requested_device") not in (None, ran_on):
+            ran_on = f"{ran_on} (requested {r['requested_device']})"
+        print(f"\n>>> MODEL {i}/{len(jobs)} COMPLETE — "
+              f"{r['symbol']} x {r['predictor']} on {ran_on} — "
+              f"READY TO SEND:")
+        print(f"    result file 1: {r['model_file']}")
+        print(f"    result file 2: {r['weights_file']}")
+        for j2, png in enumerate(r["plots"], 1):
+            print(f"    image {j2}:       {png}")
+        if r.get("chart_error"):
+            print(f"    NOTE: charts failed ({r['chart_error']}); "
+                  f"model + weights above are complete")
+        print(f"    cost={r['loss']:.3e}  ({r['train_seconds']:.0f}s)")
 
-        print(f"\n>>> MODEL {i}/{len(combos)} COMPLETE — READY TO SEND:")
-        print(f"    result file 1: {r['model_pickle']}")
-        print(f"    result file 2: {r['weights']}")
-        for j, png in enumerate(r["plots"], 1):
-            print(f"    image {j}:       {png}")
-        print(f"    cost={r['final_cost_weighted_mse']:.3e}  "
-              f"({r['train_seconds']:.0f}s)")
-
-    print(f"\nAll {len(combos)} models done. Summary: {summary_path}")
+    print(f"\nAll {len(jobs)} models done. Summary: {summary_path}")
 
 
 if __name__ == "__main__":

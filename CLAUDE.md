@@ -26,6 +26,12 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
    progress banners and test assertions — from the *loaded config*, never
    from parallel constants. Notebook constants may only feed the config
    generator, and the notebook prints the full generated YAML before running.
+   **The inverse is equally binding: never ship a knob nothing reads.** If a
+   parameter turns out to be ignored by the code it claims to drive, make it
+   work (a disclosed `[vendoring fix N]` if the ignoring code is vendored) —
+   do not delete it and do not leave it as decoration. `test_no_dead_knobs`
+   and `test_training_knobs_reach_the_trainer` enforce this; PIPELINE_GUIDE
+   §2b lists the deliberate non-knobs.
 5. **Vendor colleague code verbatim.** External research code is committed
    byte-for-byte (CRLF preserved) with a `__main__` guard; any unavoidable
    fix is marked `[vendoring fix N]` inline and disclosed. Pipeline stages
@@ -68,11 +74,19 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `distributions.predictors` emits `SEQ_DISTR_{sym}_multivariate_{pred}-`
   `{first}-{last}_{month}` (same joint encoding; SEQ only — no colleague
   multivariate CLS); a list `training.predictor` trains on it with
-  m = n_symbols^(1+len). LearningKraus_multivariate.py's library code is
-  byte-identical to LearningKraus.py (no second vendored copy — only his
-  driver differs); MOD_/WGHTS_ names follow his driver verbatim, incl.
-  `WGHTS_` without `MOD_` and the `training.predictor_abbrev` tag
-  (`L10_micro_vpin`).
+  m = n_symbols^(1+len). LearningKraus_multivariate.py's library code
+  matches LearningKraus.py apart from our two disclosed deltas (the
+  `on_epoch` callback and `[vendoring fix 1]`), so there is no second
+  vendored copy — only his driver differs; MOD_/WGHTS_ names follow his
+  driver verbatim, incl. `WGHTS_` without `MOD_` and the
+  `training.predictor_abbrev` tag (`L10_micro_vpin`).
+- **`[vendoring fix 1]` in `LearningKraus.py`** (CRLF, byte-level edit):
+  `train()`'s DataLoader hardcoded `num_workers=0`, so its own
+  `num_workers` argument was dead and the original `main()`'s
+  `num_workers=8` never took effect. Now honoured, making
+  `training.num_workers` a real knob. Results-neutral (shuffling is in the
+  parent sampler; `SeqDataset.__getitem__` is a pure index lookup).
+  `train_old` is legacy and left untouched.
 
 ## Environments
 
@@ -103,43 +117,92 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 - `tests/verify_multivariate_seq.py` — multivariate SEQ_DISTR (input to
   the multivariate Kraus model) + its training-load filtering vs the
   colleague's code composed his way (his get_z_ts, the pure-Python
-  original counting, his naming), byte-for-byte. NOT YET RUN.
-- `april_smoke.ipynb` — 1-day plumbing check of every April stage; expected
-  counts derived from the config. Run before `april_run.ipynb`.
+  original counting, his naming), byte-for-byte. PASSED (user-run).
+- `tests/test_pipeline_units.py` also carries the config audit and the
+  stage-3 guards: `test_no_dead_knobs` (every config field is read by
+  `pipeline/` or `scripts/`), `test_training_knobs_reach_the_trainer`,
+  `test_stage3_schedule_comes_from_the_config`,
+  `test_chart_capture_is_concurrency_safe`, `test_device_*`.
+  **20 tests, Claude-runnable** (no market data) — run these after any
+  change to `pipeline/`.
+- `april_smoke.ipynb` — 1-day / 5-epoch check of every April stage,
+  **including the stage-3 fan-out** (`plan_training` +
+  `run_training_jobs`, not just a direct `train_model` call — the cell
+  that only called the trainer let a real fan-out bug through). Run
+  before `april_run.ipynb`. PASSED (user-run, 2026-07-20, all 3 symbols,
+  fan-out included).
 
 ## Current state (2026-07-20)
 
-- PRs #1–#6 all merged into `dev`; no open feature branches besides #7/#8
-  (below). Branch picture: `main` (locked, frozen baseline) + `dev`
-  (everything). All equivalence suites user-run and PASSED before their
-  merges.
-- The April experiment now covers **NVDA, INTC, and IBM**:
+- **PRs #1–#10 all merged into `dev`; no open PRs, no feature branches.**
+  Branch picture: `main` (locked, frozen baseline) + `dev` (everything).
+  Every equivalence suite was user-run and PASSED before its merge.
+- The April experiment covers **NVDA, INTC, and IBM**: run
   `april_smoke.ipynb` first, then `april_run.ipynb` (Linux params baked in:
   workers=0, ensemble on) or `scripts/run_april.py`. Per symbol: 10 SEQ +
   50 CLS-v2 + 20 v2 ENS_TD files + 3 trained Kraus models (2 result files +
-  4 charts each, sent per-model) — 9 models total across the three symbols.
-  Training defaults = original `LearningKraus.main()` values. NVDA/INTC
-  read from `data/NVDA_INTC` (interleaved, filtered per symbol); IBM reads
-  from its own `data/IBM` directory, resolved via `data.asset_paths`.
-  **`data/IBM` does not exist on this Mac yet** — config generation for
-  IBM will raise `FileNotFoundError` until the directory is populated
-  (on this machine or the compute box).
-- Ensemble v2 (`ensemble_training_data_2.py`, PR #6) is integrated, is the
-  default, and its byte-equivalence harness PASSED (user-run, 1 day).
-- Multivariate Kraus (`LearningKraus_multivariate.py`, PR #7) is integrated:
-  list predictors in distributions/training, his file naming.
-  `tests/verify_multivariate_seq.py` **PASSED** (user-run) — open, ready to
-  merge. Training on the 256-symbol alphabet (m·d² = 256·64² complex
-  params) is a compute-box job, not a Mac job.
-- Per-asset data paths (PR #8, stacked on #7): `data.asset_paths` +
-  `DataConfig.resolved_data_path()`; `configs/default.yaml` carries the
-  four-asset catalog (NVDA/INTC → NVDA_INTC, AAPL, IBM). `scripts/run_april.py`
-  and both April notebooks now resolve each symbol's directory from this
-  catalog (`--asset-path SYMBOL=DIR` / `ASSET_PATH_OVERRIDES` to override).
-  `data/AAPL` and `data/IBM` do not exist locally yet — config validation
-  stays cheap and does not check the directories.
+  4 charts each, sent per-model) — 9 models total. Training defaults =
+  original `LearningKraus.main()` values, audited field by field against
+  it. NVDA/INTC read from `data/NVDA_INTC` (interleaved, filtered per
+  symbol); IBM from `data/IBM`, resolved via `data.asset_paths`.
+  **Smoke PASSED (user-run) on the compute box, all 3 symbols, fan-out
+  included** — the April run has not yet been executed at full scale.
+- Ensemble v2 (PR #6) is the default; multivariate Kraus (PR #7) is
+  integrated (256-symbol alphabet — a compute-box job, not a Mac job);
+  per-asset data paths (PR #8) resolve each symbol's directory.
+- **Training lives in `pipeline/models.py` (PR #10).** The April run calls
+  the registered trainer — the same path as `python -m pipeline train` —
+  and no longer imports from `tests/`. Charts (`training.plot_entries`),
+  `training.seed`, `num_workers`, `eval_batch_size` and `plot_dpi` are all
+  config fields the trainer reads. `tests/train_kraus_baseline.py` remains
+  only as a standalone independent cross-check.
+- **Model files are `MOD_*` / `WGHTS_MOD_*`.** The old harness emitted
+  `MODR_*` (an off-by-one: `title[8:]` on the 10-char `SEQ_DISTR_`
+  prefix, kept at the time as an "original quirk"). Retired by the user's
+  decision, so **filenames from current runs will not match any
+  pre-2026-07-20 batch**, and a byte-comparison against
+  `train_kraus_baseline.py` must account for it.
+- **Stage-3 GPU fan-out (PR #10).** The 3-qubit model is tiny (m=16
+  operators of d=8, ~2k params) and is kernel-launch-latency bound, so one
+  training uses a few percent of an A100 — sequential training left 7 of 8
+  GPUs idle. `plan_training()` + `run_training_jobs()` in
+  `scripts/run_april.py` dispatch one training per device and yield
+  results in **completion order**. Schedule comes from `training.gpus` /
+  `training.max_parallel` (the same fields `train-all` uses), written into
+  `configs/april_*.yaml` by `make_config` — `--gpus` / `--train-parallel`
+  and the notebook's `GPUS` / `TRAIN_PARALLEL` feed the config, they are
+  never read directly. Two schedulers still exist (`pipeline.parallel.
+  train_all` is per-config and subprocess-based; the April fan-out is
+  cross-symbol and pool-based); unifying them is an open follow-up that
+  would cost the notebook's inline send-as-you-go charts unless
+  `train_all` learns to stream results.
+- **Ordering that matters in `train_kraus`:** the model and weights are
+  persisted **before** charts are rendered, and a chart failure is caught
+  and reported as `result["chart_error"]` rather than raised. Charting
+  first meant a plotting error discarded a completed training.
+- `pipeline/models.py::capture_plots_as_png` intercepts `plt.show` under a
+  lock to save `plotDistributions`' chunked figures. It closes only the
+  figures it opened and **does not touch the caller's matplotlib backend**
+  — training from a notebook leaves that notebook's inline plotting
+  intact.
+- Config schema gained three metadata hooks (PIPELINE_GUIDE §2b):
+  `free_form` (choices are presets, other values legal), `options_provider`
+  (the panel's second chooser lists real values — `devices` →
+  `pipeline.models.available_devices()`), and `validator` (a named checker
+  applied generically by `validate()`). A `free_form` field that declares
+  no validator is itself a validation error. `validate()` also enforces
+  closed `choices` — nothing did before, so a typo in
+  `optimizer`/`resampling` used to survive save/load.
+- `data/AAPL` and `data/IBM` do not exist on the Mac; config validation is
+  cheap and does not stat directories. **Three raw `.dbn.zst` files
+  (~143 MB) are tracked at the repository root** from an early AAPL commit
+  — they are not under `data/`, not gitignored, and have bloated `.git` to
+  ~4.5 GB, which is enough to break some tooling (`/code-review ultra`
+  refuses on repo size). Removing them from history needs a `dev` rewrite
+  + force-push: **the user's call, not to be done unilaterally.**
 - `tests/baseline_manifest.json` not yet minted — first full
-  `verify_against_baseline.py` PASS writes it; commit it, then use `--fast`.
+  `verify_against_baseline.py` PASS writes it; commit it, then use
+  `--fast`.
 
 ## Conventions
 

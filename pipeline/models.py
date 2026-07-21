@@ -15,12 +15,63 @@ from __future__ import annotations
 
 import datetime
 import pickle
+import threading
+import time
 from pathlib import Path
 
 from . import REPO_ROOT
-from .config import RunConfig
+from .config import RunConfig, predictor_key
 
 REGISTRY: dict[str, callable] = {}
+
+# pyplot is a process-global state machine, so the show-interception below
+# is serialised. Separate processes each get their own lock and their own
+# pyplot, so the GPU fan-out is unaffected either way.
+_CHART_LOCK = threading.RLock()
+
+
+def capture_plots_as_png(fig_base, dpi: int, draw) -> list[str]:
+    """Run `draw()` and save every figure it would have shown, returning the
+    PNG paths in draw order (`{fig_base}_1.png`, `_2.png`, ...).
+
+    `LearningKraus.plotDistributions` renders in chunks and calls
+    `plt.show()` once per chunk; intercepting `show` is the only way to
+    capture those without editing vendored code.
+
+    Three things make this safe for any scheduling:
+
+    * **Concurrency** — the interception is held under a lock. Without it
+      two in-process trainings (threads) would share one `plt.show`
+      binding, interleave their figures into each other's filenames, and
+      restore the original `show` out of order.
+    * **The caller's figures** — only figures opened by `draw()` are
+      closed. A blanket `plt.close("all")` would discard figures the
+      calling notebook had open.
+    * **The caller's backend** — deliberately not modified. Because the
+      real `show` is never called no window can open, so forcing "Agg" (a
+      process-global change that silently breaks a notebook's inline
+      plotting for the rest of its session) is unnecessary.
+    """
+    import matplotlib.pyplot as plt
+
+    paths: list[str] = []
+    with _CHART_LOCK:
+        pre_existing = set(plt.get_fignums())
+
+        def _save_instead_of_show(*_a, **_k):
+            paths.append(f"{fig_base}_{len(paths) + 1}.png")
+            plt.savefig(paths[-1], dpi=dpi, bbox_inches="tight")
+            plt.close()
+
+        original_show = plt.show
+        plt.show = _save_instead_of_show
+        try:
+            draw()
+        finally:
+            plt.show = original_show
+            for num in set(plt.get_fignums()) - pre_existing:
+                plt.close(num)
+    return paths
 
 
 def register_model(name: str):
@@ -28,6 +79,32 @@ def register_model(name: str):
         REGISTRY[name] = fn
         return fn
     return deco
+
+
+def available_devices() -> list[str]:
+    """Devices this machine can actually train on, most specific last:
+    ['cpu', 'cuda', 'cuda:0', ...] or ['cpu', 'mps', 'mps:0'].
+
+    Used by the control panel so the device chooser only offers what exists
+    here. CUDA enumeration is delegated to pipeline.parallel.visible_gpus so
+    this and `train-all` agree on the device list (and both respect an
+    externally set CUDA_VISIBLE_DEVICES). Never raises: a missing or broken
+    torch degrades to CPU-only rather than breaking the panel.
+    """
+    devices = ["cpu"]
+    try:
+        import torch
+
+        from .parallel import visible_gpus
+        if torch.cuda.is_available():
+            devices.append("cuda")
+            devices += [f"cuda:{i}" for i in visible_gpus("auto")]
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            devices += ["mps", "mps:0"]
+    except Exception:      # torch missing/broken (or no backends attr)
+        pass
+    return devices
 
 
 def resolve_device(requested: str) -> str:
@@ -84,6 +161,13 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
             f"kraus: {len(sequences)} sequences from {seq_path.name}, "
             f"device={device}"))
 
+    # seeding: training.seed >= 0 makes the run reproducible; -1 is the
+    # original main() behavior (unseeded, results vary run to run). This was
+    # previously declared in the config but never applied here.
+    if t.seed >= 0:
+        import torch
+        torch.manual_seed(t.seed)
+
     model0 = None
     if t.continue_from:
         model0, meta = lk.load_model_weights(
@@ -94,6 +178,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
             progress.update(stage="training", pct=100.0 * ep / total,
                             message=f"epoch {ep}/{total} loss {loss:.3e}")
 
+    started = time.time()
     model = lk.train(
         sequences, emp_probs, t.max_seq_len,
         m, t.n_qubits,
@@ -102,6 +187,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         epochs=t.epochs,
         learn_rho0=t.learn_rho0,
         model=model0,
+        num_workers=t.num_workers,
         device=device,
         optimizer_name=t.optimizer,
         loss_kind=t.loss_kind,
@@ -109,8 +195,11 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         on_epoch=on_epoch,
     )
 
+    train_seconds = time.time() - started
+
     # evaluation + persistence (same artifacts as the original script)
-    p_model = lk.predict_probs(model, sequences, batch_size=2048)
+    p_model = lk.predict_probs(model, sequences,
+                               batch_size=t.eval_batch_size)
     total_loss = float(sum(pe * (pe - pm) ** 2
                            for pe, pm in zip(emp_probs, p_model)))
 
@@ -121,6 +210,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         base = seq_path.name.replace("SEQ_DISTR_", "")
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
         wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
+        chart_tag = t.predictor
     else:
         # LearningKraus_multivariate driver naming, verbatim — including its
         # WGHTS_ prefix without MOD_; predictor part is the hand-written
@@ -132,7 +222,20 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
                 + "_" + cfg.data.dates[0][:6])
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
         wghts_path = model_dir / f"WGHTS_{base}_{t.n_qubits}q.pt"
+        # charts carry the SAME predictor tag as the model files, so a
+        # delivered bundle (2 result files + 4 PNGs) is internally
+        # consistent; predictor_key's '+'-joined form would not match
+        chart_tag = pred_tag
 
+    # charts: LearningKraus.plotDistributions draws the first `plot_entries`
+    # entries in chunks of 62 and calls plt.show() per chunk -> 4 figures for
+    # the default 200. Interactively those are 4 windows; here plt.show is
+    # intercepted so each becomes its own PNG. Ported from the April harness
+    # so this is the single trainer that produces the full per-model bundle.
+    # PERSIST FIRST. Charting is cosmetic; training is hours. Rendering
+    # before the model reached disk meant any plotting error (too few
+    # sequences to slice, a backend fault, a full disk) discarded the whole
+    # run. Now a chart failure costs only the images.
     with open(mod_path, "wb") as fh:
         pickle.dump([model, sequences, emp_probs], fh)
     lk.save_model_weights(
@@ -142,9 +245,38 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
               "loss": total_loss, "epochs": t.epochs,
               "trained": datetime.datetime.now().isoformat(timespec="seconds")})
 
+    fig_paths: list[str] = []
+    chart_error = None
+    if t.plot_entries > 0:
+        fig_base = model_dir / (
+            f"{cfg.data.symbol}_{cfg.data.dates[0][:6]}_"
+            f"{cfg.distributions.predicted}-{chart_tag}_"
+            f"{t.n_qubits}q")
+        n = t.plot_entries
+        try:
+            fig_paths = capture_plots_as_png(
+                fig_base, t.plot_dpi,
+                lambda: lk.plotDistributions(
+                    emp_probs[:n], p_model[:n], sequences[:n],
+                    f"{base} Cost={total_loss}",
+                    "Target", "Model", c1="blue", c2="red"))
+        except Exception as e:  # noqa: BLE001 - the model is already safe
+            # reported, not raised: one model's missing charts must not kill
+            # a sweep whose other trainings are still running
+            chart_error = f"{type(e).__name__}: {e}"
+            print(f"[warning] {mod_path.name}: charts failed ({chart_error}); "
+                  f"model and weights were saved", flush=True)
+            if progress:
+                progress.update(stage="training",
+                                message=f"charts failed: {chart_error}")
+
     result = {"model_file": str(mod_path), "weights_file": str(wghts_path),
               "loss": total_loss, "n_sequences": len(sequences),
-              "device": device}
+              "device": device, "plots": fig_paths,
+              "chart_error": chart_error,
+              "symbol": cfg.data.symbol,
+              "predictor": predictor_key(t.predictor),
+              "train_seconds": round(train_seconds, 1)}
     if progress:
         progress.done(f"loss {total_loss:.3e} -> {wghts_path.name}")
     return result

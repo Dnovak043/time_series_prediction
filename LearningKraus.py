@@ -395,7 +395,14 @@ def train(
         ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        # [vendoring fix 1] was hardcoded `num_workers=0`, which made
+        # this function's own num_workers argument dead -- the original
+        # main()'s num_workers=8 never took effect. Now honoured, so
+        # training.num_workers is a real knob. Results are unaffected:
+        # shuffling is done by the sampler in the parent process and
+        # SeqDataset.__getitem__ is a pure index lookup, so workers only
+        # fetch -- batch composition is identical for any worker count.
+        num_workers=num_workers,
         collate_fn=collate_pad,
         pin_memory=(device.startswith("cuda")),
     )

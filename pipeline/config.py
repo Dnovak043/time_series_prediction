@@ -12,11 +12,29 @@ Defaults reproduce the hardcoded values of the original scripts exactly.
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+_DEVICE_PRESETS = ("auto", "cuda", "cpu", "mps")
+
+
+def _validate_device(device) -> list[str]:
+    """training.device is free-form: the presets, or an indexed accelerator
+    like 'cuda:3' / 'mps:0'. Anything else is a typo that would otherwise
+    surface only when torch failed mid-training."""
+    if not isinstance(device, str):
+        return [f"training.device {device!r} must be a string"]
+    if device in _DEVICE_PRESETS:
+        return []
+    if re.fullmatch(r"(cuda|mps):\d+", device):
+        return []
+    return [f"training.device {device!r} is not one of "
+            f"{list(_DEVICE_PRESETS)} or an indexed device like 'cuda:0'"]
 
 
 def predictor_key(predictor) -> str:
@@ -28,10 +46,38 @@ def predictor_key(predictor) -> str:
     return "+".join(predictor)
 
 
-def _f(default, help="", choices=None, advanced=False, **kw):
+_VALIDATORS = {"device": _validate_device}
+
+
+def _f(default, help="", choices=None, advanced=False, free_form=False,
+       options_provider=None, validator=None, **kw):
+    """free_form=True: `choices` are the common presets, but other values are
+    legal too (validated by RunConfig.validate). The control panel renders
+    such a field as the preset dropdown *plus* a second chooser, so e.g.
+    training.device='cuda:3' is representable.
+
+    options_provider: name of a provider registered in pipeline.ui that
+    enumerates the extra values for that second chooser (e.g. 'devices' ->
+    the accelerators present on this machine). With a provider the second
+    chooser is a dropdown, so only real values can be picked; without one it
+    falls back to a free-text box.
+
+    validator: name of a checker registered in _VALIDATORS, applied by
+    RunConfig.validate. A free_form field SHOULD declare one — without it
+    the field accepts anything, which is the hole `choices` normally
+    closes."""
     md = {"help": help}
     if choices:
         md["choices"] = choices
+    if free_form:
+        md["free_form"] = True
+    if options_provider:
+        md["options_provider"] = options_provider
+    if validator:
+        if validator not in _VALIDATORS:
+            raise ValueError(f"unknown validator {validator!r}; "
+                             f"registered: {sorted(_VALIDATORS)}")
+        md["validator"] = validator
     if advanced:
         md["advanced"] = True
     if callable(default):
@@ -246,9 +292,46 @@ class TrainingConfig:
     max_seq_len: int = _f(6, "Drop training sequences longer than this.")
     min_seq_prob: float = _f(0.0, "Drop training sequences with empirical "
                                   "probability below this.", advanced=True)
+    num_workers: int = _f(0, "DataLoader worker processes for training. "
+                             "0 = load in the training process. Speed only, "
+                             "never results: shuffling is done by the sampler "
+                             "in the parent and SeqDataset is a pure index "
+                             "lookup, so batch composition is identical for "
+                             "any worker count. NOTE: LearningKraus.train() "
+                             "ignored this until [vendoring fix 1] made it "
+                             "live, so the original main()'s num_workers=8 "
+                             "never actually took effect — 8 reproduces its "
+                             "stated intent. Keep low (or 0) when trainings "
+                             "are fanned across GPUs: each is already a "
+                             "subprocess, and workers nest under it.",
+                          advanced=True)
+    eval_batch_size: int = _f(2048, "Batch size for the post-training "
+                                    "predict_probs evaluation pass (the "
+                                    "original main() used 2*1024). Memory/"
+                                    "speed only — the probabilities are "
+                                    "identical for any batch size.",
+                              advanced=True)
+    plot_entries: int = _f(200, "How many sequences to chart with "
+                                "plotDistributions after training. It draws "
+                                "in chunks of 62, so 200 -> the "
+                                "characteristic 4 PNGs per model. 0 = skip "
+                                "charting.")
+    plot_dpi: int = _f(120, "Resolution of the saved chart PNGs. Affects the "
+                            "delivered image files, so it is a run "
+                            "parameter, not a display preference.",
+                       advanced=True)
     device: str = _f("auto", "Compute device. auto = cuda if available else cpu "
-                             "(mps is opt-in: complex-tensor support is limited).",
-                     choices=["auto", "cuda", "cpu", "mps"])
+                             "(mps is opt-in: complex-tensor support is limited). "
+                             "Besides these presets an explicit 'cuda:N' pins "
+                             "one training to one GPU — that is how the April "
+                             "stage-3 fan-out schedules, and such values are "
+                             "written into each per-model config.yaml. The "
+                             "panel offers only the accelerators present on "
+                             "this machine, plus whatever the loaded config "
+                             "already names (configs are portable between the "
+                             "Mac and the compute box).",
+                     choices=["auto", "cuda", "cpu", "mps"], free_form=True,
+                     options_provider="devices", validator="device")
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
@@ -256,11 +339,17 @@ class TrainingConfig:
                           "Predictors for `train-all` (one model per predictor); "
                           "empty = train all of distributions.predictors.",
                           advanced=True)
-    gpus: str = _f("auto", "GPUs for `train-all`: 'auto' = every CUDA device "
-                           "visible to torch, a comma list like '0,2,5', or "
-                           "'none' to force CPU.", advanced=True)
-    max_parallel: int = _f(0, "Max concurrent trainings in `train-all`. "
-                              "0 = auto: one per GPU, else 1 (CPU).")
+    gpus: str = _f("auto", "GPUs to schedule trainings on, for BOTH "
+                           "`train-all` and the April stage-3 fan-out: "
+                           "'auto' = every CUDA device visible to torch "
+                           "(respects an externally set "
+                           "CUDA_VISIBLE_DEVICES), a comma list like "
+                           "'0,2,5', or 'none' to force CPU.", advanced=True)
+    max_parallel: int = _f(0, "Max concurrent trainings, for BOTH `train-all` "
+                              "and the April stage-3 fan-out. 0 = auto: one "
+                              "per GPU, else 1 (CPU). Each 3-qubit model uses "
+                              "only a few percent of an A100, so values above "
+                              "the GPU count are reasonable.")
     seed: int = _f(-1, "Torch seed for training. -1 = unseeded, the original "
                        "main() behavior (results vary run to run).")
 
@@ -357,6 +446,30 @@ class RunConfig:
     def validate(self) -> list[str]:
         """Returns a list of problems (empty = ok). Cheap checks only."""
         problems = []
+        # closed `choices` fields must hold one of their options. Nothing
+        # enforced this before, so an out-of-set value survived save/load and
+        # only blew up later at widget construction (ipywidgets Dropdown
+        # raises TraitError when value is not in options).
+        for stage_name in STAGES:
+            stage_obj = getattr(self, stage_name)
+            for info in field_info(stage_obj):
+                if info["validator"]:
+                    problems += [f"{stage_name}.{info['name']}: {p}"
+                                 if not p.startswith(stage_name) else p
+                                 for p in _VALIDATORS[info["validator"]](
+                                     info["value"])]
+                elif info["choices"] and info["free_form"]:
+                    # a free_form field with no validator accepts anything —
+                    # exactly the hole `choices` normally closes
+                    problems.append(
+                        f"{stage_name}.{info['name']} is free_form but "
+                        f"declares no validator")
+                if not info["choices"] or info["free_form"]:
+                    continue
+                if info["value"] not in info["choices"]:
+                    problems.append(
+                        f"{stage_name}.{info['name']} {info['value']!r} is not "
+                        f"one of {info['choices']}")
         if not self.data.dates:
             problems.append("data.dates is empty")
         for d in self.data.dates:
@@ -416,6 +529,9 @@ def field_info(stage_obj) -> list[dict[str, Any]]:
             "type": f.type,
             "help": f.metadata.get("help", ""),
             "choices": f.metadata.get("choices"),
+            "free_form": f.metadata.get("free_form", False),
+            "options_provider": f.metadata.get("options_provider"),
+            "validator": f.metadata.get("validator"),
             "advanced": f.metadata.get("advanced", False),
         })
     return out
