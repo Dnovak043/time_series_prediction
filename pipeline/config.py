@@ -327,11 +327,17 @@ class TrainingConfig:
                           "Predictors for `train-all` (one model per predictor); "
                           "empty = train all of distributions.predictors.",
                           advanced=True)
-    gpus: str = _f("auto", "GPUs for `train-all`: 'auto' = every CUDA device "
-                           "visible to torch, a comma list like '0,2,5', or "
-                           "'none' to force CPU.", advanced=True)
-    max_parallel: int = _f(0, "Max concurrent trainings in `train-all`. "
-                              "0 = auto: one per GPU, else 1 (CPU).")
+    gpus: str = _f("auto", "GPUs to schedule trainings on, for BOTH "
+                           "`train-all` and the April stage-3 fan-out: "
+                           "'auto' = every CUDA device visible to torch "
+                           "(respects an externally set "
+                           "CUDA_VISIBLE_DEVICES), a comma list like "
+                           "'0,2,5', or 'none' to force CPU.", advanced=True)
+    max_parallel: int = _f(0, "Max concurrent trainings, for BOTH `train-all` "
+                              "and the April stage-3 fan-out. 0 = auto: one "
+                              "per GPU, else 1 (CPU). Each 3-qubit model uses "
+                              "only a few percent of an A100, so values above "
+                              "the GPU count are reasonable.")
     seed: int = _f(-1, "Torch seed for training. -1 = unseeded, the original "
                        "main() behavior (results vary run to run).")
 

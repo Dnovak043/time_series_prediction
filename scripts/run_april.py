@@ -124,7 +124,8 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
                 n_qubits: int = 3, seed: int = -1,
                 train_predictors: list[str] | None = None,
                 predicted: str | None = None,
-                cls_names: list[str] | None = None) -> Path:
+                cls_names: list[str] | None = None,
+                gpus: str = "auto", max_parallel: int = 0) -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -150,6 +151,11 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     # the models this experiment trains (boss's 3) — explicit in the config,
     # and what train-all would sweep for this config too
     cfg.training.predictors = list(train_predictors or PREDICTORS)
+    # stage-3 scheduling is a run parameter like any other: it lands in the
+    # generated config, and the fan-out reads it back from there rather than
+    # from a CLI/notebook constant (CLAUDE.md rule 4)
+    cfg.training.gpus = gpus
+    cfg.training.max_parallel = max_parallel
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
     path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
     cfg.save(path)
@@ -202,13 +208,30 @@ def _train_one(job: dict) -> dict:
     return r
 
 
+def training_schedule(configs: dict) -> tuple:
+    """(gpu ids, concurrency) for stage 3, taken from the config.
+
+    Both come from the generated config — training.gpus and
+    training.max_parallel, the same fields `pipeline train-all` uses — so
+    the schedule is recorded in configs/april_*.yaml and reproducible from
+    it alone. make_config writes them identically for every symbol, so the
+    first one is authoritative.
+    """
+    cfg = RunConfig.load(next(iter(configs.values())))
+    gpus = visible_gpu_ids(cfg.training.gpus)
+    n_jobs = sum(len(RunConfig.load(p).training.predictors)
+                 for p in configs.values())
+    n_par = cfg.training.max_parallel or (len(gpus) or 1)
+    return gpus, max(1, min(n_par, max(1, n_jobs)))
+
+
 def build_training_jobs(configs: dict, gpus: list | None = None) -> list:
     """One job per (symbol, training predictor), round-robin across GPUs.
 
     `configs` maps symbol -> generated config path; the training parameters
     are read back from that config, so the jobs stay config-authoritative.
     """
-    gpus = visible_gpu_ids() if gpus is None else gpus
+    gpus = training_schedule(configs)[0] if gpus is None else gpus
     jobs = []
     for symbol, cfg_path in configs.items():
         cfg = RunConfig.load(cfg_path)
@@ -273,11 +296,17 @@ def main():
                          "Default: configs/default.yaml's data.asset_paths "
                          "catalog, auto-discovered in/near the repo.")
     ap.add_argument("--train-parallel", type=int, default=0,
-                    help="concurrent trainings in stage 3: 0 = auto (one per "
-                         "visible GPU), 1 = sequential (previous behavior), "
-                         "N = exactly N. Each 3-qubit model uses only a few "
-                         "percent of an A100, so N above the GPU count is "
-                         "reasonable.")
+                    metavar="N", dest="max_parallel",
+                    help="concurrent trainings in stage 3 -> written to the "
+                         "config as training.max_parallel. 0 = auto (one per "
+                         "visible GPU), 1 = sequential, N = exactly N. Each "
+                         "3-qubit model uses only a few percent of an A100, "
+                         "so N above the GPU count is reasonable.")
+    ap.add_argument("--gpus", default="auto",
+                    help="GPUs for stage 3 -> written to the config as "
+                         "training.gpus. 'auto' = every CUDA device torch "
+                         "sees (respects CUDA_VISIBLE_DEVICES), '0,2,5' = "
+                         "those ids, 'none' = force CPU.")
     ap.add_argument("--with-ensemble", action="store_true",
                     help="also build the fixed-length ENS_TD_* ensemble "
                          "tables per symbol (25 files each; colleague's "
@@ -314,7 +343,8 @@ def main():
             None, pattern,   # None -> DIST_PREDICTORS
             epochs=args.epochs, n_qubits=args.n_qubits,
             seed=-1 if args.seed is None else args.seed,
-            train_predictors=args.predictors)
+            train_predictors=args.predictors,
+            gpus=args.gpus, max_parallel=args.max_parallel)
 
     # ---- stage 2: distributions -------------------------------------------------
     if not args.skip_distributions:
@@ -351,12 +381,9 @@ def main():
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     results = []
 
-    gpus = visible_gpu_ids()
     train_configs = {s: configs[s] for s in args.symbols}
+    gpus, n_par = training_schedule(train_configs)   # from the CONFIG
     jobs = build_training_jobs(train_configs, gpus)
-    n_par = (args.train_parallel if args.train_parallel > 0
-             else (len(gpus) or 1))
-    n_par = max(1, min(n_par, len(jobs)))
 
     t0cfg = RunConfig.load(configs[args.symbols[0]]).training
     print(f"\n=== {len(jobs)} models | {len(gpus) or 'no'} GPU(s) | "

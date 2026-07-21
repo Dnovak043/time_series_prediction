@@ -439,6 +439,59 @@ def test_choices_are_validated():
     print("  PASS choices validated in config, not at widget-construction")
 
 
+def test_stage3_schedule_comes_from_the_config():
+    """GPU selection and concurrency must be read from the config.
+
+    Regression: the April fan-out called visible_gpu_ids() with the default
+    'auto' and took concurrency from --train-parallel/TRAIN_PARALLEL, so
+    training.gpus and training.max_parallel — fields that already mean
+    exactly this for `train-all` — were silently ignored. Setting
+    training.gpus: '0,2' to dodge busy cards had no effect (CLAUDE.md
+    rule 4: every knob that affects a run must be a RunConfig field).
+    """
+    import sys as _sys
+
+    import matplotlib
+    matplotlib.use("Agg")
+    root = Path(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(root / "scripts"))
+    import run_april
+    from run_april import build_training_jobs, make_config, training_schedule
+
+    with tempfile.TemporaryDirectory() as d:
+        original_root, run_april.ROOT = run_april.ROOT, Path(d)
+        try:
+            (Path(d) / "configs").mkdir()
+
+            def generate(gpus, max_parallel):
+                return {s: make_config(s, Path(d), ["20250401"], 0,
+                                       epochs=5, gpus=gpus,
+                                       max_parallel=max_parallel)
+                        for s in ("NVDA", "INTC")}
+
+            # an explicit GPU list reaches the scheduler
+            paths = generate("0,2", 0)
+            assert RunConfig.load(paths["NVDA"]).training.gpus == "0,2"
+            gpus, n_par = training_schedule(paths)
+            assert gpus == ["0", "2"], gpus
+            jobs = build_training_jobs(paths, gpus)
+            assert sorted({j["device"] for j in jobs}) == ["cuda:0", "cuda:2"]
+            assert n_par == 2, n_par        # one per selected GPU
+
+            # explicit concurrency wins over the GPU count
+            gpus, n_par = training_schedule(generate("0,2", 1))
+            assert n_par == 1, n_par
+
+            # 'none' forces CPU scheduling regardless of hardware
+            gpus, n_par = training_schedule(generate("none", 0))
+            assert gpus == [] and n_par == 1
+            jobs = build_training_jobs(generate("none", 0), gpus)
+            assert {j["device"] for j in jobs} == {"cpu"}
+        finally:
+            run_april.ROOT = original_root
+    print("  PASS stage-3 schedule is read from training.gpus/max_parallel")
+
+
 def test_stage3_listing_format_sites_use_label():
     """Neither run surface may apply a format spec to the raw predictor."""
     import json as _json
@@ -466,6 +519,7 @@ if __name__ == "__main__":
                test_no_dead_knobs, test_training_knobs_reach_the_trainer,
                test_training_jobs_handle_multivariate_predictors,
                test_stage3_listing_format_sites_use_label,
+               test_stage3_schedule_comes_from_the_config,
                test_device_cuda_index_loads_in_control_panel,
                test_device_chooser_offers_only_real_devices,
                test_panel_save_reports_invalid_config,

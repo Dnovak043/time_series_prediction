@@ -141,8 +141,15 @@ against the colleague's own functions run his way.
 | `continue_from` | — | WGHTS_*.pt to resume |
 | `model_dir` | . | where MOD_*/WGHTS_* are written |
 | `predictors` | [] (= all) | which predictors `train-all` sweeps over |
-| `gpus` | auto | GPUs for `train-all`: all visible / `0,2,5` / `none` |
-| `max_parallel` | 0 (auto) | concurrent trainings; auto = one per GPU, else 1 |
+| `gpus` | auto | GPUs to schedule trainings on, for **both** `train-all` and the April stage-3 fan-out: `auto` = every CUDA device torch sees (respects an externally set `CUDA_VISIBLE_DEVICES`), `0,2,5` = those ids, `none` = force CPU |
+| `max_parallel` | 0 (auto) | concurrent trainings, for **both** `train-all` and the April fan-out; auto = one per GPU, else 1. Each 3-qubit model uses only a few percent of an A100, so values above the GPU count are reasonable |
+
+Stage-3 scheduling is config-driven: `scripts/run_april.py --gpus/--train-parallel`
+and the notebook's `GPUS`/`TRAIN_PARALLEL` are written *into* the generated
+`configs/april_*.yaml` by `make_config` (exactly as `--epochs`, `--n-qubits` and
+`--seed` already are), and `training_schedule()` reads them back from there. The
+printed YAML is therefore the authority for how stage 3 runs, and the schedule is
+reproducible from the config alone.
 
 **Model file naming (bivariate):** `MOD_{sym}_bivariate_{predicted}-{predictor}_{month}_{q}q`
 and `WGHTS_MOD_..._{q}q.pt`. Runs made before the training consolidation used the
