@@ -129,10 +129,13 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   **including the stage-3 fan-out** (`plan_training` +
   `run_training_jobs`, not just a direct `train_model` call — the cell
   that only called the trainer let a real fan-out bug through) and an
-  exact-filename check of the `WGHTS_*` deliverables. Run before
-  `april_run.ipynb`. The pre-group-split version PASSED (user-run,
-  2026-07-20); the reworked 2-group version (6 smoke trainings, incl.
-  multivariate) has **not been user-run yet**.
+  exact-filename check of the `WGHTS_*` deliverables. Direct-call cell
+  trains only the first symbol's two models (code-path check); the
+  fan-out cell trains all 6 across GPUs and asserts the jobs spread over
+  distinct devices — the sequential single-GPU part is deliberately
+  minimal. Run before `april_run.ipynb`. The pre-group-split version
+  PASSED (user-run, 2026-07-20); the reworked 2-group version has **not
+  been user-run yet**.
 
 ## Current state (2026-07-27)
 
