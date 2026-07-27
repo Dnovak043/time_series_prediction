@@ -60,6 +60,7 @@ Notes:
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -501,6 +502,13 @@ def main():
 
     print(f"\n=== {len(jobs)} models | {len(devices)} device(s) | "
           f"{n_par} at a time ===")
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None:
+        # the single most common cause of "everything ran on one GPU":
+        # torch only sees (and renumbers) the devices this names, and
+        # training.gpus 'auto' deliberately schedules within it
+        print(f"    NOTE: CUDA_VISIBLE_DEVICES={cvd!r} restricts this run — "
+              f"torch sees only these GPUs, renumbered from cuda:0")
     # per-model hyperparameters, not one symbol's standing in for all nine
     for j in jobs:
         t = RunConfig.load(j["config"]).training
