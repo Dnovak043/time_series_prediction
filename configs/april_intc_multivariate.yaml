@@ -1,5 +1,5 @@
 data:
-  symbol: NVDA
+  symbol: INTC
   asset_paths: {}
   data_path: /Users/ilk085528/time_series_prediction/data/NVDA_INTC
   file_pattern: xnas-itch-{date}.mbp-10.dbn.zst
@@ -17,7 +17,7 @@ featurize:
   vol_window: 0
   workers: 4
   use_cache: true
-  cache_dir: outputs/april/NVDA/feature_cache
+  cache_dir: outputs/april/INTC/feature_cache
   cache_format: parquet
 encode: {n_symbols: 4, alpha: 0.05, bins_mode: expanding_quantile, fill_mode: bfill,
   min_periods: 2}
@@ -46,7 +46,7 @@ distributions:
   sample_size: 1.0
   sample_after_length: 30
   random_state: 42
-  output_dir: outputs/april/NVDA
+  output_dir: outputs/april/INTC
 ensemble:
   reference: v2
   seq_lengths: [1, 2, 3, 4, 5]
@@ -58,21 +58,21 @@ ensemble:
   - vpin
   - [ofi_L10_norm_n, micro_price, vpin]
   smoothing: 0.0
-  output_dir: outputs/april/NVDA/ensemble
+  output_dir: outputs/april/INTC/ensemble
 training:
   model: kraus
-  predictor: vpin
-  predictor_abbrev: ''
+  predictor: [ofi_L10_norm_n, micro_price, vpin]
+  predictor_abbrev: L10_micro_vpin
   seq_distr_file: ''
-  n_qubits: 3
+  n_qubits: 6
   epochs: 3000
-  batch_size: 4096
+  batch_size: 3072
   lr: 0.001
-  optimizer: sgd
+  optimizer: adam
   loss_kind: nll_seq
   length_mixture: uniform
   learn_rho0: true
-  max_seq_len: 6
+  max_seq_len: 4
   min_seq_prob: 0.0
   num_workers: 0
   eval_batch_size: 2048
@@ -80,8 +80,9 @@ training:
   plot_dpi: 120
   device: auto
   continue_from: ''
-  model_dir: outputs/april/NVDA/models
-  predictors: [vpin, ofi_L10_norm_n, micro_price]
+  model_dir: outputs/april/INTC/models
+  predictors:
+  - [ofi_L10_norm_n, micro_price, vpin]
   gpus: auto
   max_parallel: 0
   seed: -1

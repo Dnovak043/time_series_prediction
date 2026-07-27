@@ -1,25 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-From-zero April run for the boss's request: every April-2025 trading day,
-NVDA, INTC, and IBM, 3 predictors each = 9 models, 9x2 result files, 9x4
-images.
+From-zero April run: every April-2025 trading day, NVDA, INTC, and IBM,
+reproducing the colleague's two current drivers (his 2026-02
+LearningKraus.py and LearningKraus_multivariate.py, run for AAPL) per
+symbol: 3 bivariate models + 1 multivariate model = 4 models/symbol,
+12 total, 12x2 result files + 12x4 images.
 
 Each symbol reads from its own raw-data directory (`data.asset_paths` in
 `configs/default.yaml`): NVDA and INTC share `data/NVDA_INTC` (interleaved),
 IBM has its own `data/IBM`.
 
+The two drivers train with DIFFERENT hyperparameters (his bivariate script
+lands on sgd/batch 8*512/3 qubits/max_seq_len 6; his multivariate driver
+uses adam/batch 6*512/6 qubits/max_seq_len 4), and one RunConfig holds one
+training block — so stage 1 writes TWO configs per symbol, one per
+experiment group (TRAIN_GROUPS below), and stage 3 plans over all of them.
+
 Stages (each skippable):
 
-  1. generate configs/april_{nvda,intc,ibm}.yaml
+  1. generate configs/april_{nvda,intc,ibm}.yaml           (bivariate group)
+          + configs/april_{...}_multivariate.yaml          (multivariate group)
      - dates: every xnas-itch-202504*.dbn.zst present in each symbol's
        resolved data directory (21 days for NVDA_INTC)
-     - predictors: tvi_n, obi_L1, ofi_L1_n_norm (features_list[1..3])
+     - training predictors: group 0 = vpin, ofi_L10_norm_n, micro_price
+       (bivariate, one model each); group 1 = the joint
+       [ofi_L10_norm_n, micro_price, vpin] predictor (one model,
+       WGHTS tag `L10_micro_vpin` from his driver)
      - instrument_filter: true  <-- REQUIRED: NVDA_INTC carries NVDA+INTC
        interleaved and the legacy path never filtered; harmless no-op on a
        single-symbol directory like data/IBM (already just that ticker).
   2. distribution runs (featurize -> encode -> SEQ/CLS pickles), one per
-     symbol, day-parallel -> outputs/april/{SYMBOL}/
-  3. nine trainings via the pipeline's registered trainer (pipeline.models,
+     SYMBOL (the two group configs share every distribution setting, so the
+     bivariate config runs it and the multivariate config reuses the
+     outputs), day-parallel -> outputs/april/{SYMBOL}/. The predictor list
+     includes the multivariate entry, so the joint SEQ_DISTR_*_multivariate_*
+     file is produced in the same pass.
+  3. twelve trainings via the pipeline's registered trainer (pipeline.models,
      the same path as `python -m pipeline train`), fanned one per GPU
      -> outputs/april/{SYMBOL}/models/
      After EACH model a "READY TO SEND" block lists exactly the 2 result
@@ -29,9 +45,9 @@ Stages (each skippable):
 Run:
     .env/bin/python scripts/run_april.py                   # everything
     .env/bin/python scripts/run_april.py --epochs 50       # training smoke
+    .env/bin/python scripts/run_april.py --only-configs    # just stage 1
     .env/bin/python scripts/run_april.py --only-distributions
     .env/bin/python scripts/run_april.py --skip-distributions --seed 0
-    .env/bin/python scripts/run_april.py --n-qubits 4      # if the boss wants 4q
 
 Notes:
   - data/ is only read. Distribution outputs are byte-reproducible; training
@@ -60,13 +76,34 @@ import pipeline  # noqa: E402,F401
 from pipeline.config import RunConfig, predictor_key  # noqa: E402
 
 SYMBOLS = ["NVDA", "INTC", "IBM"]
-PREDICTED = "log_mid"   # features[0] in BOTH colleague files: every output
-                        # is a bivariate (log_mid, predictor) pair
-PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n_norm"]   # TRAINING (boss's 3 models/symbol)
+PREDICTED = "log_mid"   # features_list[0] in BOTH colleague drivers: every
+                        # output pairs log_mid with the predictor(s)
+
+# TRAINING: one group per colleague driver. Every value here is written into
+# that group's generated config (stage 1) and read back from it (stage 3) —
+# the dicts only feed the config generator, never the run directly.
+#   group 0 = his 2026-02 LearningKraus.py bivariate script body. Its
+#     opt_name reassignment chain lands on "sgd" and batch_size on 8*512;
+#     he re-ran it once per predictor — the three he kept are below.
+#   group 1 = his LearningKraus_multivariate.py driver: the joint
+#     (log_mid, ofi_L10_norm_n, micro_price, vpin) encoding, alphabet
+#     m = 4^4 = 256, 6 qubits, max_seq_len 4, adam, batch 6*512;
+#     `L10_micro_vpin` is his hand-written file-name abbreviation.
+MULTI_PREDICTOR = ["ofi_L10_norm_n", "micro_price", "vpin"]
+TRAIN_GROUPS = [
+    dict(suffix="", predictors=["vpin", "ofi_L10_norm_n", "micro_price"],
+         n_qubits=3, batch_size=8 * 512, optimizer="sgd", max_seq_len=6,
+         predictor_abbrev=""),
+    dict(suffix="_multivariate", predictors=[MULTI_PREDICTOR],
+         n_qubits=6, batch_size=6 * 512, optimizer="adam", max_seq_len=4,
+         predictor_abbrev="L10_micro_vpin"),
+]
+PREDICTORS = TRAIN_GROUPS[0]["predictors"]          # bivariate models/symbol
 # distribution stage: colleague's full spec (his email / cls_reference.py)
+# + the multivariate joint entry (SEQ only — he defines no multivariate CLS)
 DIST_PREDICTORS = ["tvi_n", "obi_L1", "ofi_L1_n", "ofi_L1_n_norm",
                    "ofi_L1_norm_n", "ofi_L3_norm_n", "ofi_L10_norm_n",
-                   "micro_price", "vpin", "sigma_W"]
+                   "micro_price", "vpin", "sigma_W", MULTI_PREDICTOR]
 CLS_NAMES = ["c1", "c2", "c4", "ca2", "ca4"]        # one CLS file per class
 MONTH = "202504"
 
@@ -119,13 +156,17 @@ def april_dates(data_dir: Path, pattern: str) -> list[str]:
 
 
 def make_config(symbol: str, data_dir: Path, dates: list[str],
-                workers: int, predictors: list[str] | None = None,
+                workers: int, predictors: list | None = None,
                 file_pattern: str | None = None, epochs: int = 3000,
                 n_qubits: int = 3, seed: int = -1,
-                train_predictors: list[str] | None = None,
+                train_predictors: list | None = None,
                 predicted: str | None = None,
                 cls_names: list[str] | None = None,
-                gpus: str = "auto", max_parallel: int = 0) -> Path:
+                gpus: str = "auto", max_parallel: int = 0,
+                batch_size: int | None = None, optimizer: str | None = None,
+                max_seq_len: int | None = None,
+                predictor_abbrev: str | None = None,
+                config_suffix: str = "") -> Path:
     cfg = RunConfig()
     cfg.data.symbol = symbol
     cfg.data.data_path = str(data_dir)
@@ -133,9 +174,10 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     if file_pattern:
         cfg.data.file_pattern = file_pattern
     cfg.data.instrument_filter = True
-    # colleague's new process_distributions spec: 10 predictors (superset of
-    # the 3 training predictors -> their SEQ files come out of the same run),
-    # v2 multi-class CLS sweep with (-1,0,1) column order
+    # colleague's new process_distributions spec: 10 bivariate predictors
+    # (superset of the 3 training predictors -> their SEQ files come out of
+    # the same run) + the multivariate joint entry, v2 multi-class CLS sweep
+    # with (-1,0,1) column order
     cfg.distributions.predicted = predicted or PREDICTED
     cfg.distributions.predictors = list(predictors or DIST_PREDICTORS)
     cfg.distributions.class_names = list(cls_names or CLS_NAMES)
@@ -148,16 +190,29 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     cfg.training.epochs = epochs
     cfg.training.n_qubits = n_qubits
     cfg.training.seed = seed
-    # the models this experiment trains (boss's 3) — explicit in the config,
-    # and what train-all would sweep for this config too
+    # the models this config trains — explicit in the config, and what
+    # train-all would sweep for this config too; `predictor` (singular) is
+    # the group's first model so `pipeline train` on this config alone is
+    # meaningful
     cfg.training.predictors = list(train_predictors or PREDICTORS)
+    cfg.training.predictor = cfg.training.predictors[0]
+    # per-group hyperparameters (None = keep the TrainingConfig default,
+    # which is audited against the original LearningKraus.main())
+    if batch_size is not None:
+        cfg.training.batch_size = batch_size
+    if optimizer is not None:
+        cfg.training.optimizer = optimizer
+    if max_seq_len is not None:
+        cfg.training.max_seq_len = max_seq_len
+    if predictor_abbrev is not None:
+        cfg.training.predictor_abbrev = predictor_abbrev
     # stage-3 scheduling is a run parameter like any other: it lands in the
     # generated config, and the fan-out reads it back from there rather than
     # from a CLI/notebook constant (CLAUDE.md rule 4)
     cfg.training.gpus = gpus
     cfg.training.max_parallel = max_parallel
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
-    path = ROOT / "configs" / f"april_{symbol.lower()}.yaml"
+    path = ROOT / "configs" / f"april_{symbol.lower()}{config_suffix}.yaml"
     cfg.save(path)
     print(f"wrote {path}  ({len(dates)} days, filter ON, workers={workers})")
     return path
@@ -311,14 +366,22 @@ def run_training_jobs(jobs: list, max_parallel: int = 0):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--symbols", nargs="+", default=SYMBOLS)
-    ap.add_argument("--predictors", nargs="+", default=PREDICTORS)
+    ap.add_argument("--predictors", nargs="+", default=None,
+                    help="override the BIVARIATE group's training "
+                         "predictors (default: vpin ofi_L10_norm_n "
+                         "micro_price, the colleague's three runs); the "
+                         "multivariate group is fixed by his driver")
     ap.add_argument("--epochs", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=None)
-    ap.add_argument("--n-qubits", type=int, default=3,
-                    help="3 = committed value; boss's earlier charts were 4q")
+    ap.add_argument("--n-qubits", type=int, default=None,
+                    help="override the BIVARIATE group's register size "
+                         "(default 3, his driver); the multivariate group "
+                         "stays at its driver's 6")
     ap.add_argument("--workers", type=int, default=4,
                     help="day-parallel workers for distributions "
                          "(4 is Mac-RAM-safe; 0 = one per core on the box)")
+    ap.add_argument("--only-configs", action="store_true",
+                    help="stop after writing configs/april_*.yaml")
     ap.add_argument("--skip-distributions", action="store_true")
     ap.add_argument("--only-distributions", action="store_true")
     ap.add_argument("--asset-path", action="append", default=[],
@@ -360,7 +423,10 @@ def main():
             sys.exit(f"data dir not found for {symbol}: {data_dir}")
         resolved[symbol] = data_dir
 
-    configs = {}
+    # one config per (symbol, experiment group): the groups differ in their
+    # training hyperparameters and one config holds one training block
+    configs = {}                       # "{symbol}{suffix}" -> config path
+    dist_configs = {}                  # symbol -> group-0 path (stage 2 runs once)
     scope_by_dir: dict[Path, tuple[str, list[str]]] = {}
     for symbol, data_dir in resolved.items():
         if data_dir not in scope_by_dir:
@@ -370,18 +436,35 @@ def main():
             print(f"data: {data_dir}  (pattern: {pattern})  April days: "
                   f"{len(dates)} ({dates[0]}..{dates[-1]})")
         pattern, dates = scope_by_dir[data_dir]
-        configs[symbol] = make_config(
-            symbol, data_dir, dates, args.workers,
-            None, pattern,   # None -> DIST_PREDICTORS
-            epochs=args.epochs, n_qubits=args.n_qubits,
-            seed=-1 if args.seed is None else args.seed,
-            train_predictors=args.predictors,
-            gpus=args.gpus, max_parallel=args.max_parallel)
+        for i, group in enumerate(TRAIN_GROUPS):
+            bivariate = group["suffix"] == ""
+            configs[symbol + group["suffix"]] = make_config(
+                symbol, data_dir, dates, args.workers,
+                None, pattern,   # None -> DIST_PREDICTORS
+                epochs=args.epochs,
+                n_qubits=(args.n_qubits if bivariate and args.n_qubits
+                          else group["n_qubits"]),
+                seed=-1 if args.seed is None else args.seed,
+                train_predictors=(args.predictors if bivariate and
+                                  args.predictors else group["predictors"]),
+                gpus=args.gpus, max_parallel=args.max_parallel,
+                batch_size=group["batch_size"], optimizer=group["optimizer"],
+                max_seq_len=group["max_seq_len"],
+                predictor_abbrev=group["predictor_abbrev"],
+                config_suffix=group["suffix"])
+            if i == 0:
+                dist_configs[symbol] = configs[symbol + group["suffix"]]
+
+    if args.only_configs:
+        return
 
     # ---- stage 2: distributions -------------------------------------------------
+    # once per SYMBOL, not per config: the group configs share every
+    # distribution setting (predictor list incl. the multivariate entry,
+    # output dir, cache), so one pass serves both training groups
     if not args.skip_distributions:
         from pipeline.runner import run
-        for symbol, cfg_path in configs.items():
+        for symbol, cfg_path in dist_configs.items():
             cfg = RunConfig.load(cfg_path)      # banner derives from the CONFIG
             print(f"\n=== distributions: {symbol} "
                   f"({len(cfg.data.dates)} days x "
@@ -394,7 +477,7 @@ def main():
     # ---- optional: ensemble training tables (ENS_TD_*) --------------------------
     if args.with_ensemble:
         from pipeline.ensemble import run_ensemble
-        for symbol, cfg_path in configs.items():
+        for symbol, cfg_path in dist_configs.items():
             cfg = RunConfig.load(cfg_path)      # banner derives from the CONFIG
             print(f"\n=== ensemble tables: {symbol} "
                   f"({len(cfg.ensemble.predictors)} channels x "
@@ -413,8 +496,7 @@ def main():
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     results = []
 
-    train_configs = {s: configs[s] for s in args.symbols}
-    jobs, n_par = plan_training(train_configs)       # from the CONFIG
+    jobs, n_par = plan_training(configs)             # from the CONFIG
     devices = sorted({j["device"] for j in jobs})
 
     print(f"\n=== {len(jobs)} models | {len(devices)} device(s) | "

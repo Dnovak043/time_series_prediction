@@ -206,10 +206,17 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     model_dir = root / t.model_dir
     model_dir.mkdir(parents=True, exist_ok=True)
     if isinstance(t.predictor, str):
-        # original bivariate naming: MOD_<base>, WGHTS_MOD_<base>.pt
-        base = seq_path.name.replace("SEQ_DISTR_", "")
+        # bivariate naming, verbatim from the colleague's current driver
+        # (2026-02 LearningKraus.py): names are built from the run
+        # components, and WGHTS_ carries NO MOD_ infix — matching the
+        # multivariate branch below. His earlier driver's
+        # "WGHTS_"+('MOD'+title[8:]) form (our WGHTS_MOD_*) is retired
+        # with it, so filenames differ from pre-2026-07-27 batches.
+        base = (cfg.data.symbol + "_bivariate_"
+                + cfg.distributions.predicted + "-" + t.predictor
+                + "_" + cfg.data.dates[0][:6])
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
-        wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
+        wghts_path = model_dir / f"WGHTS_{base}_{t.n_qubits}q.pt"
         chart_tag = t.predictor
     else:
         # LearningKraus_multivariate driver naming, verbatim — including its

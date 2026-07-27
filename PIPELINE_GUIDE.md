@@ -153,10 +153,14 @@ printed YAML is therefore the authority for how stage 3 runs, and the schedule i
 reproducible from the config alone.
 
 **Model file naming (bivariate):** `MOD_{sym}_bivariate_{predicted}-{predictor}_{month}_{q}q`
-and `WGHTS_MOD_..._{q}q.pt`. Runs made before the training consolidation used the
-April harness, which emitted `MODR_*` / `WGHTS_MODR_*` — a stray `R` from slicing
-only 8 of the 10 characters in `SEQ_DISTR_`, preserved at the time as an "original
-quirk". That is retired; filenames from current runs will not match those batches.
+and `WGHTS_{sym}_bivariate_..._{q}q.pt` — verbatim from the colleague's current
+(2026-02) `LearningKraus.py` driver, which builds both names from the run
+components and puts **no `MOD_` infix** in the `WGHTS_` name (matching his
+multivariate driver). Two older conventions are retired: pre-consolidation runs
+(the April harness) emitted `MODR_*` / `WGHTS_MODR_*` — a stray `R` from slicing
+only 8 of the 10 characters in `SEQ_DISTR_` — and the 2026-07-20 consolidation
+briefly emitted `WGHTS_MOD_*` (his older driver's form). Filenames from current
+runs match neither batch.
 
 ### 2b. The no-invisible-parameters invariant
 
