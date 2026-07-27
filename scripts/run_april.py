@@ -91,13 +91,18 @@ PREDICTED = "log_mid"   # features_list[0] in BOTH colleague drivers: every
 #     m = 4^4 = 256, 6 qubits, max_seq_len 4, adam, batch 6*512;
 #     `L10_micro_vpin` is his hand-written file-name abbreviation.
 MULTI_PREDICTOR = ["ofi_L10_norm_n", "micro_price", "vpin"]
+# num_workers=8 verbatim from both drivers' train() calls. NOTE: his train()
+# hardcoded num_workers=0 in the DataLoader, so 8 never took effect in his
+# runs; [vendoring fix 1] honours it here. Results-neutral either way
+# (shuffling is in the parent sampler; batch composition is identical for
+# any worker count) — this mirrors the parameter he passes, exactly.
 TRAIN_GROUPS = [
     dict(suffix="", predictors=["vpin", "ofi_L10_norm_n", "micro_price"],
          n_qubits=3, batch_size=8 * 512, optimizer="sgd", max_seq_len=6,
-         predictor_abbrev=""),
+         num_workers=8, predictor_abbrev=""),
     dict(suffix="_multivariate", predictors=[MULTI_PREDICTOR],
          n_qubits=6, batch_size=6 * 512, optimizer="adam", max_seq_len=4,
-         predictor_abbrev="L10_micro_vpin"),
+         num_workers=8, predictor_abbrev="L10_micro_vpin"),
 ]
 PREDICTORS = TRAIN_GROUPS[0]["predictors"]          # bivariate models/symbol
 # distribution stage: colleague's full spec (his email / cls_reference.py)
@@ -165,7 +170,7 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
                 cls_names: list[str] | None = None,
                 gpus: str = "auto", max_parallel: int = 0,
                 batch_size: int | None = None, optimizer: str | None = None,
-                max_seq_len: int | None = None,
+                max_seq_len: int | None = None, num_workers: int | None = None,
                 predictor_abbrev: str | None = None,
                 config_suffix: str = "") -> Path:
     cfg = RunConfig()
@@ -205,6 +210,8 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
         cfg.training.optimizer = optimizer
     if max_seq_len is not None:
         cfg.training.max_seq_len = max_seq_len
+    if num_workers is not None:
+        cfg.training.num_workers = num_workers
     if predictor_abbrev is not None:
         cfg.training.predictor_abbrev = predictor_abbrev
     # stage-3 scheduling is a run parameter like any other: it lands in the
@@ -451,6 +458,7 @@ def main():
                 gpus=args.gpus, max_parallel=args.max_parallel,
                 batch_size=group["batch_size"], optimizer=group["optimizer"],
                 max_seq_len=group["max_seq_len"],
+                num_workers=group["num_workers"],
                 predictor_abbrev=group["predictor_abbrev"],
                 config_suffix=group["suffix"])
             if i == 0:

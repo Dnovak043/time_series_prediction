@@ -155,7 +155,9 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   micro_price, **sgd**, batch 8*512, 3q, max_seq_len 6; group 1 = his
   multivariate driver — [ofi_L10_norm_n, micro_price, vpin], abbrev
   `L10_micro_vpin`, adam, batch 6*512, 6q, max_seq_len 4. Both: 3000
-  epochs, lr 1e-3, nll_seq, learn_rho0, unseeded. Stage 2 runs once per
+  epochs, lr 1e-3, nll_seq, learn_rho0, unseeded, num_workers 8 (verbatim
+  from his train() calls; live via [vendoring fix 1], results-neutral).
+  Stage 2 runs once per
   symbol (the group configs share every distribution setting). NVDA/INTC
   read from `data/NVDA_INTC` (interleaved, filtered per symbol); IBM from
   `data/IBM`, resolved via `data.asset_paths`.
