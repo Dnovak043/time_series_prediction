@@ -162,6 +162,24 @@ only 8 of the 10 characters in `SEQ_DISTR_` — and the 2026-07-20 consolidation
 briefly emitted `WGHTS_MOD_*` (his older driver's form). Filenames from current
 runs match neither batch.
 
+**`ensemble_model` (stage 4, LearningEnsemble.py).** Frozen pre-trained Kraus
+encoders + a trained QuantumDecoder predicting the class distribution
+(`pipeline/ensemble_model.py`; CLI `python -m pipeline ensemble-model`; the
+vendored math is `LearningEnsemble.py` at the repo root, `[vendoring fix 1]`
+= guarded module-level `sys.exit()`, `[vendoring fix 2]` = the driver's
+hardcoded `gpu_id=1`, superseded by `ensemble_model.device`). Inputs: the v2
+`ENS_TD_*` tables (`ensemble.output_dir`) and the four `WGHTS_*` encoders
+(`training.model_dir`). Field defaults are his driver verbatim: classes
+`[c2, ca4]` (one trained model per class — his single `clsName` re-run),
+`seq_lens [1,2,3,4]`, channels = 3 bivariate + the joint multivariate
+(only the first n−1 encoders enter the trained ensemble — his driver
+excludes the multivariate channel), 200 epochs, batch 6·512, lr 2e-4,
+`ce` loss, decoder-only (encoders frozen). Output:
+`{model_dir}/{cls}/ENS_MD_{sym}_{month}_` — his file name has no class tag,
+so the per-class directory is the disambiguator. `validate()` checks that
+every requested class/length has a corresponding ENS_TD source and that the
+three channel lists agree in length.
+
 ### 2b. The no-invisible-parameters invariant
 
 Every value that changes a run must be a `RunConfig` field. The inverse also

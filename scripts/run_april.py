@@ -48,6 +48,9 @@ Run:
     .env/bin/python scripts/run_april.py --only-configs    # just stage 1
     .env/bin/python scripts/run_april.py --only-distributions
     .env/bin/python scripts/run_april.py --skip-distributions --seed 0
+    .env/bin/python scripts/run_april.py --only-ensemble-models
+        # stage 4 alone (LearningEnsemble): per (symbol, class) multi-encoder
+        # ensembles from the ENS_TD_* + WGHTS_* files of a finished run
 
 Notes:
   - data/ is only read. Distribution outputs are byte-reproducible; training
@@ -91,18 +94,13 @@ PREDICTED = "log_mid"   # features_list[0] in BOTH colleague drivers: every
 #     m = 4^4 = 256, 6 qubits, max_seq_len 4, adam, batch 6*512;
 #     `L10_micro_vpin` is his hand-written file-name abbreviation.
 MULTI_PREDICTOR = ["ofi_L10_norm_n", "micro_price", "vpin"]
-# num_workers=8 verbatim from both drivers' train() calls. NOTE: his train()
-# hardcoded num_workers=0 in the DataLoader, so 8 never took effect in his
-# runs; [vendoring fix 1] honours it here. Results-neutral either way
-# (shuffling is in the parent sampler; batch composition is identical for
-# any worker count) — this mirrors the parameter he passes, exactly.
 TRAIN_GROUPS = [
     dict(suffix="", predictors=["vpin", "ofi_L10_norm_n", "micro_price"],
          n_qubits=3, batch_size=8 * 512, optimizer="sgd", max_seq_len=6,
-         num_workers=8, predictor_abbrev=""),
+         predictor_abbrev=""),
     dict(suffix="_multivariate", predictors=[MULTI_PREDICTOR],
          n_qubits=6, batch_size=6 * 512, optimizer="adam", max_seq_len=4,
-         num_workers=8, predictor_abbrev="L10_micro_vpin"),
+         predictor_abbrev="L10_micro_vpin"),
 ]
 PREDICTORS = TRAIN_GROUPS[0]["predictors"]          # bivariate models/symbol
 # distribution stage: colleague's full spec (his email / cls_reference.py)
@@ -170,7 +168,7 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
                 cls_names: list[str] | None = None,
                 gpus: str = "auto", max_parallel: int = 0,
                 batch_size: int | None = None, optimizer: str | None = None,
-                max_seq_len: int | None = None, num_workers: int | None = None,
+                max_seq_len: int | None = None,
                 predictor_abbrev: str | None = None,
                 config_suffix: str = "") -> Path:
     cfg = RunConfig()
@@ -210,8 +208,6 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
         cfg.training.optimizer = optimizer
     if max_seq_len is not None:
         cfg.training.max_seq_len = max_seq_len
-    if num_workers is not None:
-        cfg.training.num_workers = num_workers
     if predictor_abbrev is not None:
         cfg.training.predictor_abbrev = predictor_abbrev
     # stage-3 scheduling is a run parameter like any other: it lands in the
@@ -220,6 +216,10 @@ def make_config(symbol: str, data_dir: Path, dates: list[str],
     cfg.training.gpus = gpus
     cfg.training.max_parallel = max_parallel
     cfg.ensemble.output_dir = f"outputs/april/{symbol}/ensemble"
+    # stage 4 (LearningEnsemble): per-class models under this base — the
+    # class name becomes a subdirectory because his ENS_MD_* file name
+    # carries no class tag and would otherwise self-overwrite
+    cfg.ensemble_model.model_dir = f"outputs/april/{symbol}/ensemble_models"
     path = ROOT / "configs" / f"april_{symbol.lower()}{config_suffix}.yaml"
     cfg.save(path)
     print(f"wrote {path}  ({len(dates)} days, filter ON, workers={workers})")
@@ -349,26 +349,116 @@ def build_training_jobs(configs: dict, gpus: list | None = None,
     return jobs
 
 
-def run_training_jobs(jobs: list, max_parallel: int = 0):
-    """Yield each finished training as it completes (completion order, not
+def run_training_jobs(jobs: list, max_parallel: int = 0, worker=None):
+    """Yield each finished job as it completes (completion order, not
     submission order). max_parallel: 0 = one per distinct device (i.e. one
-    per GPU), 1 = sequential (the original behavior), N = N at once."""
+    per GPU), 1 = sequential (the original behavior), N = N at once.
+    `worker` is the module-level job function (default: the stage-3 Kraus
+    trainer; stage 4 passes _train_one_ensemble_model)."""
+    worker = worker or _train_one
     if max_parallel <= 0:
         max_parallel = len({j["device"] for j in jobs})
     max_parallel = max(1, min(max_parallel, len(jobs)))
 
     if max_parallel == 1:
         for job in jobs:
-            yield _train_one(job)
+            yield worker(job)
         return
 
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor, as_completed
     with ProcessPoolExecutor(max_workers=max_parallel,
                              mp_context=mp.get_context("spawn")) as ex:
-        futures = [ex.submit(_train_one, j) for j in jobs]
+        futures = [ex.submit(worker, j) for j in jobs]
         for fut in as_completed(futures):
             yield fut.result()
+
+
+# ---------------------------------------------------------------------------
+# stage 4: LearningEnsemble — one multi-encoder ensemble per (symbol, class)
+# ---------------------------------------------------------------------------
+def _train_one_ensemble_model(job: dict) -> dict:
+    """One (symbol, class) ensemble training pinned to one device.
+    Module-level for the same spawn-context reason as _train_one."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from pipeline.ensemble_model import train_ensemble_model
+
+    cfg = RunConfig.load(job["config"])
+    cfg.ensemble_model.device = job["device"]
+    r = train_ensemble_model(cfg, job["class_name"], repo_root=ROOT)
+    r["requested_device"] = job["device"]
+    return r
+
+
+def plan_ensemble_models(configs: dict) -> tuple:
+    """(jobs, concurrency) for stage 4: one job per (symbol, class), from
+    ensemble_model.class_names of each symbol's config, scheduled by the
+    same training.gpus / training.max_parallel fields as stage 3."""
+    if not configs:
+        raise ValueError("no configs to schedule: nothing to train")
+
+    loaded = {s: RunConfig.load(p) for s, p in configs.items()}
+    schedules = {(c.training.gpus, c.training.max_parallel)
+                 for c in loaded.values()}
+    if len(schedules) > 1:
+        raise ValueError(
+            "configs disagree on the schedule (training.gpus, "
+            f"training.max_parallel): {sorted(schedules)}. They are "
+            "generated together, so this means one was hand-edited.")
+
+    first = next(iter(loaded.values())).training
+    gpus = visible_gpu_ids(first.gpus)
+    jobs = []
+    for symbol, cfg_path in configs.items():
+        for class_name in loaded[symbol].ensemble_model.class_names:
+            device = f"cuda:{gpus[len(jobs) % len(gpus)]}" if gpus else "cpu"
+            jobs.append({
+                "symbol": symbol,
+                "class_name": class_name,
+                "label": class_name,
+                "config": str(cfg_path),
+                "device": device,
+                "run_id": f"april-ensmodel-{symbol}-{class_name}",
+            })
+    if not jobs:
+        raise ValueError("no ensemble models to train: every config has an "
+                         "empty ensemble_model.class_names")
+    n_par = first.max_parallel or (len(gpus) or 1)
+    return jobs, max(1, min(n_par, len(jobs)))
+
+
+def run_ensemble_model_stage(dist_configs: dict) -> list:
+    """Stage 4 at the console: plan, fan out, report each model."""
+    jobs, n_par = plan_ensemble_models(dist_configs)
+    devices = sorted({j["device"] for j in jobs})
+    print(f"\n=== {len(jobs)} ensemble models (symbol x class) | "
+          f"{len(devices)} device(s) | {n_par} at a time ===")
+    for j in jobs:
+        em = RunConfig.load(j["config"]).ensemble_model
+        print(f"    {j['symbol']:6s} x {j['label']:4s} -> {j['device']}"
+              f"  (epochs={em.epochs}, batch={em.batch_size}, lr={em.lr}, "
+              f"{em.prediction_loss}, seq_lens={em.seq_lens})")
+
+    summary_path = ROOT / "outputs" / "april" / "ensemble_models_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    results = []
+    for i, r in enumerate(run_training_jobs(jobs, n_par,
+                                            worker=_train_one_ensemble_model),
+                          1):
+        results.append(r)
+        summary_path.write_text(json.dumps(results, indent=1))
+        print(f"\n>>> ENSEMBLE MODEL {i}/{len(jobs)} COMPLETE — "
+              f"{r['symbol']} x {r['class_name']} on {r['device']}:")
+        print(f"    model file: {r['model_file']}")
+        if "agreement_pct" in r:
+            print(f"    agreement: {r['agreement_pct']:.2f}% unique | "
+                  f"{r['weighted_agreement_pct']:.2f}% weighted | "
+                  f"{r['count_weighted_agreement_pct']:.2f}% by occurrence")
+        print(f"    ({r['train_seconds']:.0f}s, "
+              f"{r['n_sequences']} joint sequences)")
+    print(f"\nAll {len(jobs)} ensemble models done. Summary: {summary_path}")
+    return results
 
 
 def main():
@@ -414,6 +504,14 @@ def main():
                     help="also build the fixed-length ENS_TD_* ensemble "
                          "tables per symbol (25 files each; colleague's "
                          "experiment)")
+    ap.add_argument("--with-ensemble-models", action="store_true",
+                    help="stage 4: also train the LearningEnsemble multi-"
+                         "encoder models — one per (symbol, class in "
+                         "ensemble_model.class_names), fanned across GPUs")
+    ap.add_argument("--only-ensemble-models", action="store_true",
+                    help="ONLY stage 4, from existing outputs (needs the "
+                         "ENS_TD_* tables and the 4 WGHTS_* encoders from "
+                         "a previous run; skips stages 2 and 3)")
     args = ap.parse_args()
 
     for override in args.asset_path:
@@ -458,13 +556,17 @@ def main():
                 gpus=args.gpus, max_parallel=args.max_parallel,
                 batch_size=group["batch_size"], optimizer=group["optimizer"],
                 max_seq_len=group["max_seq_len"],
-                num_workers=group["num_workers"],
                 predictor_abbrev=group["predictor_abbrev"],
                 config_suffix=group["suffix"])
             if i == 0:
                 dist_configs[symbol] = configs[symbol + group["suffix"]]
 
     if args.only_configs:
+        return
+
+    if args.only_ensemble_models:
+        # stage 4 alone, over outputs a previous run already produced
+        run_ensemble_model_stage(dist_configs)
         return
 
     # ---- stage 2: distributions -------------------------------------------------
@@ -544,6 +646,10 @@ def main():
         print(f"    cost={r['loss']:.3e}  ({r['train_seconds']:.0f}s)")
 
     print(f"\nAll {len(jobs)} models done. Summary: {summary_path}")
+
+    # ---- stage 4 (optional): LearningEnsemble multi-encoder models --------------
+    if args.with_ensemble_models:
+        run_ensemble_model_stage(dist_configs)
 
 
 if __name__ == "__main__":

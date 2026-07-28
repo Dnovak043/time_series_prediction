@@ -3732,7 +3732,10 @@ if __name__ == "__main__" and mode == 'train':
     symbol= 'AAPL'
     date = dates[0]   # the data is aggregated for 1 month
 
-    gpu_id = 1
+    gpu_id = 1  # [vendoring fix 2] hardcoded accelerator index: only a
+    # direct `python LearningEnsemble.py` run uses this. The pipeline stage
+    # (pipeline/ensemble_model.py) never executes this driver -- its device
+    # comes from the ensemble_model.device config field.
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
 
     print('Device:',device)
@@ -4375,6 +4378,9 @@ if __name__ == "__main__" and mode == 'train':
         print("This result shows how often does the model agree with the empirical dominant class,")
         print(" weighted by how often that sequence actually occurs")
 
-sys.exit()
+if __name__ == "__main__":  # [vendoring fix 1] was a bare module-level
+    # sys.exit(), which raised SystemExit in ANY importer -- the pipeline
+    # imports this module's classes/functions. Direct runs are unchanged.
+    sys.exit()
 
 

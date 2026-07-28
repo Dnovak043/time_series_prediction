@@ -74,7 +74,7 @@ training:
   learn_rho0: true
   max_seq_len: 6
   min_seq_prob: 0.0
-  num_workers: 8
+  num_workers: 0
   eval_batch_size: 2048
   plot_entries: 200
   plot_dpi: 120
@@ -85,3 +85,29 @@ training:
   gpus: auto
   max_parallel: 0
   seed: -1
+ensemble_model:
+  class_names: [c2, ca4]
+  seq_lens: [1, 2, 3, 4]
+  channels:
+  - ofi_L10_norm_n
+  - micro_price
+  - vpin
+  - [ofi_L10_norm_n, micro_price, vpin]
+  channel_names: [ofi_L10_norm_n, micro_price, vpin, L10_micro_vpin]
+  channel_qubits: [3, 3, 3, 6]
+  epochs: 200
+  batch_size: 3072
+  lr: 0.0002
+  prediction_loss: ce
+  d_out: 3
+  use_unitary: true
+  normalization_point: input
+  lambda_enc: 0.0
+  lambda_pred: 1.0
+  freeze_encoders: true
+  freeze_decoder: false
+  length_weighting: equal
+  evaluate: true
+  eval_batch_size: 32
+  device: auto
+  model_dir: outputs/april/INTC/ensemble_models

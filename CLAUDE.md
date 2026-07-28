@@ -48,6 +48,23 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `kraus`), `parallel.py` (`train-all`: one predictor per GPU), `ui.py`
   (ipywidgets panel, `pipeline_control.ipynb`), `cli.py`
   (`python -m pipeline run|ensemble|train|train-all|...`).
+- `LearningEnsemble.py` (repo root) — colleague's multi-encoder quantum
+  ensemble (frozen pre-trained Kraus encoders + trained QuantumDecoder →
+  class distribution), vendored verbatim (CRLF) with two disclosed fixes:
+  `[vendoring fix 1]` guards a bare module-level `sys.exit()` that killed
+  any importer; `[vendoring fix 2]` marks the driver's hardcoded
+  `gpu_id = 1` — pipeline runs take `ensemble_model.device` from the
+  config instead. `pipeline/ensemble_model.py` is the config seam
+  (`EnsembleModelConfig`, defaults = his driver verbatim; CLI
+  `python -m pipeline ensemble-model`). It consumes the v2 ENS_TD_*
+  tables + the 4 WGHTS_* encoders; one model per
+  `ensemble_model.class_names` entry (c2, ca4), each in its own
+  `{model_dir}/{cls}/` because his `ENS_MD_{sym}_{month}_` name carries
+  no class tag and would self-overwrite. Verbatim quirks kept: only the
+  first n−1 encoders enter the trained ensemble (multivariate loaded but
+  excluded); seq_lens [1,2,3,4] (SL_5 exists, unread); per-channel
+  alphabet m derived from the data (`1+max(X[-1])`), failing loudly on
+  mismatch.
 - `TrainingDistributions/` — legacy + vendored research code.
   `process_distributions.py` and `LearningKraus.py` are the original scripts
   (CRLF, `__main__`-guarded, optimized call sites swapped in);
@@ -155,15 +172,17 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   micro_price, **sgd**, batch 8*512, 3q, max_seq_len 6; group 1 = his
   multivariate driver — [ofi_L10_norm_n, micro_price, vpin], abbrev
   `L10_micro_vpin`, adam, batch 6*512, 6q, max_seq_len 4. Both: 3000
-  epochs, lr 1e-3, nll_seq, learn_rho0, unseeded, num_workers 8 (verbatim
-  from his train() calls; live via [vendoring fix 1], results-neutral).
-  Stage 2 runs once per
+  epochs, lr 1e-3, nll_seq, learn_rho0, unseeded. Stage 2 runs once per
   symbol (the group configs share every distribution setting). NVDA/INTC
   read from `data/NVDA_INTC` (interleaved, filtered per symbol); IBM from
   `data/IBM`, resolved via `data.asset_paths`.
-  **The reworked smoke (2 groups, exact-WGHTS-name checks) has NOT been
-  user-run yet**; the 2026-07-20 smoke PASS predates the group split. The
-  April run has not been executed at full scale.
+  **The reworked smoke (2 groups, exact-WGHTS-name checks, stage 4) has
+  NOT been user-run yet**; the 2026-07-20 smoke PASS predates the group
+  split. The 12-model April run was executed on the box (2026-07-28,
+  outputs zipped onto dev as NVDA/INTC/IBM.zip); **stage 4** (the
+  LearningEnsemble models, `--only-ensemble-models` /
+  `RUN_ENSEMBLE_MODELS`) runs on top of those existing outputs — 3
+  symbols × (c2, ca4) = 6 decoder trainings, fanned like stage 3.
 - Ensemble v2 (PR #6) is the default; multivariate Kraus (PR #7) is
   integrated (256-symbol alphabet — a compute-box job, not a Mac job);
   per-asset data paths (PR #8) resolve each symbol's directory.
