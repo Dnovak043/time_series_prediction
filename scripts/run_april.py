@@ -367,8 +367,20 @@ def run_training_jobs(jobs: list, max_parallel: int = 0, worker=None):
 
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor, as_completed
-    with ProcessPoolExecutor(max_workers=max_parallel,
-                             mp_context=mp.get_context("spawn")) as ex:
+
+    # One job per worker process (max_tasks_per_child=1): a finished worker
+    # would otherwise idle until the whole pool closes, keeping its CUDA
+    # context and torch's cached allocator memory resident on its GPU for
+    # the rest of the stage. Exiting after the job returns that GPU's
+    # memory the moment its model completes — which matters when the box
+    # is shared with other experiments. Results are unaffected either way;
+    # the parameter needs Python >= 3.11 (older interpreters keep the
+    # hold-until-stage-end behavior).
+    pool_kwargs = dict(max_workers=max_parallel,
+                       mp_context=mp.get_context("spawn"))
+    if sys.version_info >= (3, 11):
+        pool_kwargs["max_tasks_per_child"] = 1
+    with ProcessPoolExecutor(**pool_kwargs) as ex:
         futures = [ex.submit(worker, j) for j in jobs]
         for fut in as_completed(futures):
             yield fut.result()
