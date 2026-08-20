@@ -40,6 +40,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import sys
 from pathlib import Path
@@ -208,50 +209,112 @@ def run_stage(symbol: str, mode: str, dates: list[str], workers: int) -> None:
         sys.exit(f"{len(missing)} expected file(s) not written")
     print(f"  -> {len(want)} files in {out_dir}")
 
+def write_configs(symbols, workers) -> dict:
+    """One YAML per symbol. The GPU fan-out schedulers read configs from
+    disk, and writing them also makes the run reproducible from the files
+    alone (they record training.gpus / max_parallel)."""
+    cfg_dir = ROOT / OUTPUT_ROOT / "configs"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    paths = {}
+    for symbol in symbols:
+        data_dir = find_data_dir(symbol)
+        if not data_dir.is_dir():
+            sys.exit(f"data directory not found for {symbol}: {data_dir}")
+        pattern = detect_pattern(data_dir, TRAIN_MONTH)
+        dates = days_on_disk(data_dir, pattern, TRAIN_MONTH)
+        if not dates:
+            sys.exit(f"no {TRAIN_MONTH} raw files in {data_dir}")
+        cfg = make_config(symbol, data_dir, pattern, dates, "monthly", workers)
+        problems = cfg.validate()
+        if problems:
+            sys.exit(f"{symbol} config problems:\n  - "
+                     + "\n  - ".join(problems))
+        paths[symbol] = cfg.save(cfg_dir / f"{symbol.lower()}.yaml")
+    return paths
 
-def run_downstream(symbol: str, what: str, workers: int) -> None:
-    """Stages that consume stage-1 output. Each builds the SAME config, so
-    the filenames line up by construction rather than by convention."""
+
+def run_ensemble_tables(symbol: str, workers: int) -> None:
+    from pipeline.ensemble import run_ensemble
     data_dir = find_data_dir(symbol)
     pattern = detect_pattern(data_dir, TRAIN_MONTH)
     dates = days_on_disk(data_dir, pattern, TRAIN_MONTH)
     cfg = make_config(symbol, data_dir, pattern, dates, "monthly", workers)
-    problems = cfg.validate()
-    if problems:
-        sys.exit("config problems:\n  - " + "\n  - ".join(problems))
+    print(f"\n=== {symbol} | ENS_TD tables | "
+          f"{len(cfg.ensemble.predictors)} channels x "
+          f"{len(cfg.ensemble.seq_lengths)} lengths x "
+          f"{len(cfg.ensemble.class_names)} class ===")
+    out = run_ensemble(cfg, run_id=f"sqprb-ens-{symbol}")
+    print(f"  -> {len(out)} files in {cfg.ensemble.output_dir}")
 
-    if what == "ensemble-tables":
-        from pipeline.ensemble import run_ensemble
-        print(f"\n=== {symbol} | ENS_TD tables | "
-              f"{len(cfg.ensemble.predictors)} channels x "
-              f"{len(cfg.ensemble.seq_lengths)} lengths x "
-              f"{len(cfg.ensemble.class_names)} class ===")
-        out = run_ensemble(cfg, run_id=f"sqprb-ens-{symbol}")
-        print(f"  -> {len(out)} files in {cfg.ensemble.output_dir}")
 
-    elif what == "train":
-        from pipeline.models import train_model
-        print(f"\n=== {symbol} | encoders | {len(PREDICTORS)} predictors "
-              f"x {N_QUBITS}q ===")
-        for predictor in PREDICTORS:
-            cfg.training.predictor = predictor
-            r = train_model(cfg, run_id=f"sqprb-train-{symbol}-{predictor}")
-            print(f"  {predictor:16s} loss={r['loss']:.3e}  "
-                  f"-> {pathlib.Path(r['weights_file']).name}")
+def fan_out(stage: str, cfg_paths: dict) -> None:
+    """Stages 3 and 4 across every symbol AND every GPU at once, using the
+    repo's existing scheduler (one job per device, workers exit after each
+    job so the GPU is released immediately)."""
+    from run_april import (plan_ensemble_models, plan_training,
+                           run_training_jobs, _train_one_ensemble_model)
 
-    elif what == "ensemble-model":
-        from pipeline.ensemble_model import run_ensemble_models
-        n_used = (len(PREDICTORS) - 1
-                  if cfg.ensemble_model.exclude_last_channel
-                  else len(PREDICTORS))
-        print(f"\n=== {symbol} | ensemble model | {n_used} of "
-              f"{len(PREDICTORS)} encoders x "
-              f"{len(cfg.ensemble_model.class_names)} class ===")
-        res = run_ensemble_models(cfg, run_id=f"sqprb-ensmodel-{symbol}")
-        for cls, r in res.items():
-            print(f"  {cls}: {pathlib.Path(r['model_file']).name}"
-                  + (f"  agreement {r['agreement_pct']:.2f}%"
-                     if "agreement_pct" in r else ""))
+    if stage == "train":
+        jobs, n_par = plan_training(cfg_paths)
+        worker, label = None, "encoder trainings"
+    else:
+        jobs, n_par = plan_ensemble_models(cfg_paths)
+        worker, label = _train_one_ensemble_model, "ensemble models"
+
+    devices = sorted({j["device"] for j in jobs})
+    print(f"\n=== {len(jobs)} {label} | {len(devices)} device(s) | "
+          f"{n_par} at a time ===")
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None:
+        print(f"NOTE: CUDA_VISIBLE_DEVICES={cvd!r} restricts this run — "
+              f"torch sees only these GPUs, renumbered from cuda:0")
+    for j in jobs:
+        print(f"    {j['symbol']:6s} x {j['label']:16s} -> {j['device']}")
+
+    for i, r in enumerate(run_training_jobs(jobs, n_par, worker=worker), 1):
+        tag = r.get("predictor") or r.get("class_name")
+        extra = (f"loss={r['loss']:.3e}" if "loss" in r else
+                 f"agreement={r.get('agreement_pct', float('nan')):.2f}%")
+        out = pathlib.Path(r.get("weights_file") or r["model_file"]).name
+        print(f"  [{i}/{len(jobs)}] {r['symbol']:6s} {str(tag):16s} "
+              f"{r['device']:8s} {extra}  -> {out}")
+
+
+def spawn_per_symbol(stage: str, symbols: list, args, n_par: int) -> None:
+    """Run a CPU stage for several symbols at once, as separate processes.
+
+    The day loop inside one symbol is capped at the number of trading days
+    (~21), so on a many-core box one symbol cannot saturate it; running
+    symbols side by side is the remaining axis. Subprocesses rather than a
+    pool because each child starts its own day-worker pool.
+    """
+    import subprocess
+    import time
+
+    def cmd(sym):
+        c = [sys.executable, str(pathlib.Path(__file__).resolve()),
+             "--symbols", sym, "--stages", stage,
+             "--workers", str(args.workers), "--symbol-parallel", "1",
+             "--validation-dates", *args.validation_dates]
+        return c + (["--only", args.only] if args.only else [])
+
+    queue, running, failed = list(symbols), [], []
+    while queue or running:
+        while queue and len(running) < n_par:
+            sym = queue.pop(0)
+            print(f"  launching {stage} for {sym}")
+            running.append((sym, subprocess.Popen(cmd(sym))))
+        for pair in running[:]:
+            sym, proc = pair
+            rc = proc.poll()
+            if rc is not None:
+                running.remove(pair)
+                print(f"  {sym} {stage}: {'ok' if rc == 0 else f'FAILED rc={rc}'}")
+                if rc != 0:
+                    failed.append(sym)
+        time.sleep(1)
+    if failed:
+        sys.exit(f"{stage} failed for: {', '.join(failed)}")
 
 
 def main(argv=None) -> None:
@@ -268,7 +331,13 @@ def main(argv=None) -> None:
                          "'all' = the full chain: distributions -> ENS_TD "
                          "tables -> encoders -> ensemble model.")
     ap.add_argument("--workers", type=int, default=1,
-                    help="day-parallel featurize workers (0 = one per core)")
+                    help="day-parallel featurize workers WITHIN one symbol "
+                         "(0 = one per core, capped at the day count)")
+    ap.add_argument("--symbol-parallel", type=int, default=0,
+                    help="how many symbols to process at once in the CPU "
+                         "stages. 0 = all of them (the day loop alone cannot "
+                         "saturate a many-core box); 1 = one at a time. GPU "
+                         "stages always fan out across every visible GPU.")
     args = ap.parse_args(argv)
 
     stages = args.stages
@@ -277,15 +346,24 @@ def main(argv=None) -> None:
                   "ensemble-model"]
 
     substages = [args.only] if args.only else ["training", "validation"]
-    for symbol in args.symbols:
-        for stage in stages:
-            if stage == "distributions":
-                for sub in substages:
-                    run_stage(symbol,
-                              "monthly" if sub == "training" else "daily",
-                              list(args.validation_dates), args.workers)
-            else:
-                run_downstream(symbol, stage, args.workers)
+    n_sym = args.symbol_parallel or len(args.symbols)
+
+    for stage in stages:
+        if stage in ("distributions", "ensemble-tables"):
+            if n_sym > 1 and len(args.symbols) > 1:
+                spawn_per_symbol(stage, args.symbols, args, n_sym)
+                continue
+            for symbol in args.symbols:
+                if stage == "distributions":
+                    for sub in substages:
+                        run_stage(symbol,
+                                  "monthly" if sub == "training" else "daily",
+                                  list(args.validation_dates), args.workers)
+                else:
+                    run_ensemble_tables(symbol, args.workers)
+        else:
+            # GPU stages: every symbol x predictor/class scheduled together
+            fan_out(stage, write_configs(args.symbols, args.workers))
 
 
 if __name__ == "__main__":
