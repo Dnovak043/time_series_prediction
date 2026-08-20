@@ -68,6 +68,13 @@ TRAIN_MONTH = "202504"
 VALIDATION_DATES = ["20250501", "20250502", "20250505"]
 CLASS_TAG_IN_NAME = True         # his driver's convention (see the CLS names above)
 N_QUBITS = 3                     # bivariate alphabet 4^2 = 16 -> d = 8
+EPOCHS = 5000                    # his (1).py driver: epochs=5000 (the schema
+                                 # default is 3000, from his OLDER driver)
+MIN_SEQ_PROB = 0.0001            # his (1).py bivariate branch; the schema
+                                 # default is 0.0, which trains on every
+                                 # observed sequence instead of dropping the
+                                 # rare tail -- a different training SET, not
+                                 # just a different runtime
 ENS_SEQ_LENGTHS = [1, 2, 3, 4]   # ENS_TD lengths; the ensemble model reads these
 OUTPUT_ROOT = "outputs/sqprb"
 
@@ -133,6 +140,8 @@ def make_config(symbol: str, data_dir: Path, pattern: str, dates: list[str],
     # encoders: one Kraus model per predictor, named so the ensemble stage
     # finds them (training.weights_scheme owns both sides of that join)
     cfg.training.n_qubits = N_QUBITS
+    cfg.training.epochs = EPOCHS
+    cfg.training.min_seq_prob = MIN_SEQ_PROB
     cfg.training.model_dir = f"{OUTPUT_ROOT}/{symbol}/models"
 
     # ensemble model: channels are exactly the predictors we train encoders
@@ -264,6 +273,22 @@ def fan_out(stage: str, cfg_paths: dict) -> None:
     devices = sorted({j["device"] for j in jobs})
     print(f"\n=== {len(jobs)} {label} | {len(devices)} device(s) | "
           f"{n_par} at a time ===")
+    if n_par == 1 and len(jobs) > 1:
+        # the schedule is one-per-visible-GPU, so this means torch sees at
+        # most one device. Say so here rather than leaving a silent hours-long
+        # serial run that looks like it is simply slow.
+        try:
+            import torch
+            avail, count = torch.cuda.is_available(), torch.cuda.device_count()
+        except Exception as e:                              # noqa: BLE001
+            avail, count = f"torch import failed: {e}", 0
+        print(f"    WARNING: running ONE AT A TIME. torch.cuda.is_available()"
+              f"={avail}, device_count={count}, "
+              f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')!r}."
+              f"\n    Fan-out schedules one job per visible GPU, so a single "
+              f"visible device serialises the stage. Unset "
+              f"CUDA_VISIBLE_DEVICES, or install a CUDA build of torch, or "
+              f"force concurrency with training.max_parallel.")
     cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
     if cvd is not None:
         print(f"NOTE: CUDA_VISIBLE_DEVICES={cvd!r} restricts this run — "
