@@ -10,24 +10,24 @@ Outputs per security (defaults below), all under
       SQ_PRB_{sym}_log_mid-micro_price_202504
       SQ_PRB_{sym}_log_mid-vpin_202504
       SQ_PRB_{sym}_log_mid-ofi_L3_norm_n_202504
-      CLS_DISTR_{sym}_log_mid-micro_price_202504
-      CLS_DISTR_{sym}_log_mid-vpin_202504
-      CLS_DISTR_{sym}_log_mid-ofi_L3_norm_n_202504
+      CLS_DISTR_{sym}_log_mid-micro_price_202504_ca4
+      CLS_DISTR_{sym}_log_mid-vpin_202504_ca4
+      CLS_DISTR_{sym}_log_mid-ofi_L3_norm_n_202504_ca4
 
-  validation  (one file per predictor PER DAY, tagged with the full date)
+  validation  (one file per predictor PER DAY, 20250501 / 02 / 05)
       SQ_PRB_{sym}_log_mid-{predictor}_{yyyymmdd}
-      CLS_DISTR_{sym}_log_mid-{predictor}_{yyyymmdd}
+      CLS_DISTR_{sym}_log_mid-{predictor}_ca4_{yyyymmdd}
 
 Payloads follow his two branches, which differ:
   monthly SEQ [distrs, samples]   monthly CLS  4-field rows
   daily   SEQ [sequences, probs]  daily   CLS  [[subsequence, class_probs], ...]
 
-NOTE on the class tag: his driver puts the class into the CLS name
-(monthly ``..._202504_ca4``, daily ``..._ca4_20250501``). The names above --
-the ones requested -- omit it, which is what ``class_tag_in_name = False``
-below does. Flip it to True to get his exact names. Unambiguous either way
-while a single class is swept; with several classes the tag is required or
-the files collide.
+NOTE on the class tag: the CLS names carry the class exactly as his driver
+writes it, and he orders the two fields DIFFERENTLY in the two branches --
+monthly ``..._{month}_{cls}`` but daily ``..._{cls}_{date}``. That is his
+convention, reproduced verbatim, not a typo here. Set
+``CLASS_TAG_IN_NAME = False`` to drop the tag (safe only while a single
+class is swept).
 
 Run:
     .env/bin/python scripts/run_sqprb.py                     # both stages
@@ -62,7 +62,7 @@ TRAIN_MONTH = "202504"
 # 20250503 is a SATURDAY - no session, no raw file. The first three May
 # trading days are the 1st, 2nd and 5th.
 VALIDATION_DATES = ["20250501", "20250502", "20250505"]
-CLASS_TAG_IN_NAME = False        # False = the requested names; True = his
+CLASS_TAG_IN_NAME = True         # his driver's convention (see the CLS names above)
 OUTPUT_ROOT = "outputs/sqprb"
 
 
