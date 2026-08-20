@@ -140,6 +140,39 @@ def train_ensemble_model(cfg: RunConfig, class_name: str, progress=None,
         raise ValueError(
             f"nothing left to ensemble: {n_channels} channel(s) with "
             "ensemble_model.exclude_last_channel=True")
+    # The decoder acts on the PRODUCT state of the ensembled encoders, so
+    # its density matrix is d_product x d_product with d_product = d ** n.
+    # That is exponential in the channel count: one extra 3-qubit encoder
+    # multiplies the memory by 8**2 = 64. Estimate before allocating, so an
+    # over-large ensemble reports the arithmetic instead of dying in a CUDA
+    # OOM thousands of epochs in.
+    d_each = 2 ** em.channel_qubits[0]
+    d_product = d_each ** n_used
+    bytes_per_sample = d_product * d_product * 8          # complex64
+    est_gb = bytes_per_sample * em.batch_size / 1e9
+    print(f"    product state: d={d_each} ** {n_used} channels = {d_product}, "
+          f"{bytes_per_sample / 1e6:.1f} MB/sample, "
+          f"~{est_gb:.1f} GB at batch {em.batch_size}")
+    budget_gb = None
+    try:
+        import torch
+        if device.startswith("cuda") and torch.cuda.is_available():
+            idx = int(device.split(":")[1]) if ":" in device else 0
+            budget_gb = torch.cuda.get_device_properties(idx).total_memory / 1e9
+    except Exception:                                      # noqa: BLE001
+        pass
+    if budget_gb and est_gb > 0.8 * budget_gb:
+        raise MemoryError(
+            f"ensemble decoder needs ~{est_gb:.1f} GB but {device} has "
+            f"{budget_gb:.1f} GB.\n"
+            f"  d_product = {d_each} ** {n_used} = {d_product}; memory grows "
+            f"with its SQUARE, so each extra channel costs {d_each ** 2}x.\n"
+            f"  Remedies: ensemble_model.exclude_last_channel=True (drops to "
+            f"{n_used - 1} channels, {(d_each ** (n_used - 1)) ** 2 * 8 * em.batch_size / 1e9:.1f} GB), "
+            f"or lower ensemble_model.batch_size (memory is linear in it: "
+            f"batch {max(1, int(0.6 * budget_gb * 1e9 / bytes_per_sample))} "
+            f"would fit).")
+
     ensemble = le.MultiEncoderQuantumEnsemble(
         encoders=[encoders[ch] for ch in range(n_used)],
         d_out=em.d_out,

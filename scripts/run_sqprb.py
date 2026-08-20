@@ -163,7 +163,14 @@ def make_config(symbol: str, data_dir: Path, pattern: str, dates: list[str],
     cfg.ensemble_model.channel_qubits = [N_QUBITS] * len(PREDICTORS)
     cfg.ensemble_model.class_names = [CLASS_NAME]
     cfg.ensemble_model.seq_lens = list(ENS_SEQ_LENGTHS)
-    cfg.ensemble_model.exclude_last_channel = False
+    # His n-1 exclusion is NOT bookkeeping: the decoder's density matrix is
+    # (d ** n_channels)^2, so ensembling all four 3-qubit encoders needs
+    # ~412 GB at his batch size, against ~6.4 GB for three. Keeping his
+    # default is what makes this stage runnable. The cost is that the LAST
+    # channel (sigma_W) sits out of the ensemble -- it still gets its own
+    # encoder in stage 3. To ensemble all four, set this False AND drop
+    # ensemble_model.batch_size to ~128 (~17 GB), which is ~24x more steps.
+    cfg.ensemble_model.exclude_last_channel = True
     cfg.ensemble_model.model_dir = f"{OUTPUT_ROOT}/{symbol}/ensemble_models"
 
     cfg.featurize.workers = workers
