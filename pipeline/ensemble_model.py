@@ -129,15 +129,24 @@ def train_ensemble_model(cfg: RunConfig, class_name: str, progress=None,
             str(w_path), m, em.channel_qubits[channel],
             learn_rho0=True, device="cpu")
 
-    # ---- ensemble over the FIRST n-1 encoders (his driver, verbatim:
-    # the multivariate channel is loaded above but not ensembled) ----------
+    # ---- which encoders actually enter the trained ensemble --------------
+    # His driver ensembles the first n-1: the last channel is his
+    # multivariate one, loaded and shape-checked but deliberately left out.
+    # ensemble_model.exclude_last_channel keeps that default while letting an
+    # all-bivariate channel list use every encoder instead of silently
+    # dropping one.
+    n_used = n_channels - 1 if em.exclude_last_channel else n_channels
+    if n_used < 1:
+        raise ValueError(
+            f"nothing left to ensemble: {n_channels} channel(s) with "
+            "ensemble_model.exclude_last_channel=True")
     ensemble = le.MultiEncoderQuantumEnsemble(
-        encoders=[encoders[ch] for ch in range(n_channels - 1)],
+        encoders=[encoders[ch] for ch in range(n_used)],
         d_out=em.d_out,
         use_unitary=em.use_unitary,
         normalization_point=em.normalization_point,
     )
-    sequences_list = flat["X_by_channel"][0:n_channels - 1]
+    sequences_list = flat["X_by_channel"][0:n_used]
 
     out_dir = ensemble_model_dir(cfg, class_name, root)
     out_dir.mkdir(parents=True, exist_ok=True)

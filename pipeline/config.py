@@ -348,6 +348,17 @@ class EnsembleModelConfig:
                                         "when flattening the per-length "
                                         "ENS_TD tables.",
                                choices=["equal", "counts"], advanced=True)
+    exclude_last_channel: bool = _f(True,
+                                    "Ensemble only the first n-1 encoders, "
+                                    "as his driver does — there the last "
+                                    "channel is the multivariate one, which "
+                                    "he loads and shape-checks but leaves "
+                                    "out of the trained ensemble. With an "
+                                    "all-bivariate channel list there is no "
+                                    "multivariate channel to exclude, so "
+                                    "leaving this True would silently drop a "
+                                    "real feature; set False to ensemble all "
+                                    "of them.")
     evaluate: bool = _f(True, "Run his agreement evaluation after training; "
                               "the headline metrics land in the result.")
     eval_batch_size: int = _f(32, "Evaluation batch size — his value; kept "

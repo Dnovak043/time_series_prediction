@@ -40,6 +40,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
 from pathlib import Path
 
@@ -65,6 +66,8 @@ TRAIN_MONTH = "202504"
 # trading days are the 1st, 2nd and 5th.
 VALIDATION_DATES = ["20250501", "20250502", "20250505"]
 CLASS_TAG_IN_NAME = True         # his driver's convention (see the CLS names above)
+N_QUBITS = 3                     # bivariate alphabet 4^2 = 16 -> d = 8
+ENS_SEQ_LENGTHS = [1, 2, 3, 4]   # ENS_TD lengths; the ensemble model reads these
 OUTPUT_ROOT = "outputs/sqprb"
 
 
@@ -115,6 +118,33 @@ def make_config(symbol: str, data_dir: Path, pattern: str, dates: list[str],
     # validate() requires it to name one of the configured predictors
     cfg.training.predictor = list(PREDICTORS)[0]
     cfg.training.predictors = list(PREDICTORS)
+
+    # ---- downstream stages, kept coherent with the above --------------
+    # ENS_TD_ tables: one channel per predictor, swept over the same class
+    # and the lengths the ensemble model reads back.
+    cfg.ensemble.reference = "v2"
+    cfg.ensemble.predictors = list(PREDICTORS)
+    cfg.ensemble.class_names = [CLASS_NAME]
+    cfg.ensemble.class_values = [-1, 0, 1]
+    cfg.ensemble.seq_lengths = list(ENS_SEQ_LENGTHS)
+    cfg.ensemble.output_dir = f"{OUTPUT_ROOT}/{symbol}/ensemble"
+
+    # encoders: one Kraus model per predictor, named so the ensemble stage
+    # finds them (training.weights_scheme owns both sides of that join)
+    cfg.training.n_qubits = N_QUBITS
+    cfg.training.model_dir = f"{OUTPUT_ROOT}/{symbol}/models"
+
+    # ensemble model: channels are exactly the predictors we train encoders
+    # for. exclude_last_channel is his default, which drops the LAST channel
+    # because in his run that is the multivariate one; every channel here is
+    # bivariate, so keeping it would silently discard a real feature.
+    cfg.ensemble_model.channels = list(PREDICTORS)
+    cfg.ensemble_model.channel_names = list(PREDICTORS)
+    cfg.ensemble_model.channel_qubits = [N_QUBITS] * len(PREDICTORS)
+    cfg.ensemble_model.class_names = [CLASS_NAME]
+    cfg.ensemble_model.seq_lens = list(ENS_SEQ_LENGTHS)
+    cfg.ensemble_model.exclude_last_channel = False
+    cfg.ensemble_model.model_dir = f"{OUTPUT_ROOT}/{symbol}/ensemble_models"
 
     cfg.featurize.workers = workers
     cfg.featurize.cache_dir = f"{OUTPUT_ROOT}/{symbol}/feature_cache"
@@ -179,22 +209,83 @@ def run_stage(symbol: str, mode: str, dates: list[str], workers: int) -> None:
     print(f"  -> {len(want)} files in {out_dir}")
 
 
+def run_downstream(symbol: str, what: str, workers: int) -> None:
+    """Stages that consume stage-1 output. Each builds the SAME config, so
+    the filenames line up by construction rather than by convention."""
+    data_dir = find_data_dir(symbol)
+    pattern = detect_pattern(data_dir, TRAIN_MONTH)
+    dates = days_on_disk(data_dir, pattern, TRAIN_MONTH)
+    cfg = make_config(symbol, data_dir, pattern, dates, "monthly", workers)
+    problems = cfg.validate()
+    if problems:
+        sys.exit("config problems:\n  - " + "\n  - ".join(problems))
+
+    if what == "ensemble-tables":
+        from pipeline.ensemble import run_ensemble
+        print(f"\n=== {symbol} | ENS_TD tables | "
+              f"{len(cfg.ensemble.predictors)} channels x "
+              f"{len(cfg.ensemble.seq_lengths)} lengths x "
+              f"{len(cfg.ensemble.class_names)} class ===")
+        out = run_ensemble(cfg, run_id=f"sqprb-ens-{symbol}")
+        print(f"  -> {len(out)} files in {cfg.ensemble.output_dir}")
+
+    elif what == "train":
+        from pipeline.models import train_model
+        print(f"\n=== {symbol} | encoders | {len(PREDICTORS)} predictors "
+              f"x {N_QUBITS}q ===")
+        for predictor in PREDICTORS:
+            cfg.training.predictor = predictor
+            r = train_model(cfg, run_id=f"sqprb-train-{symbol}-{predictor}")
+            print(f"  {predictor:16s} loss={r['loss']:.3e}  "
+                  f"-> {pathlib.Path(r['weights_file']).name}")
+
+    elif what == "ensemble-model":
+        from pipeline.ensemble_model import run_ensemble_models
+        n_used = (len(PREDICTORS) - 1
+                  if cfg.ensemble_model.exclude_last_channel
+                  else len(PREDICTORS))
+        print(f"\n=== {symbol} | ensemble model | {n_used} of "
+              f"{len(PREDICTORS)} encoders x "
+              f"{len(cfg.ensemble_model.class_names)} class ===")
+        res = run_ensemble_models(cfg, run_id=f"sqprb-ensmodel-{symbol}")
+        for cls, r in res.items():
+            print(f"  {cls}: {pathlib.Path(r['model_file']).name}"
+                  + (f"  agreement {r['agreement_pct']:.2f}%"
+                     if "agreement_pct" in r else ""))
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--symbols", nargs="+", default=SYMBOLS)
     ap.add_argument("--validation-dates", nargs="+", default=VALIDATION_DATES)
     ap.add_argument("--only", choices=["training", "validation"], default=None,
-                    help="run just one stage (default: both)")
+                    help="within the distributions stage, run just one "
+                         "(default: both)")
+    ap.add_argument("--stages", nargs="+", default=["distributions"],
+                    choices=["distributions", "ensemble-tables", "train",
+                             "ensemble-model", "all"],
+                    help="which pipeline stages to run, in order. "
+                         "'all' = the full chain: distributions -> ENS_TD "
+                         "tables -> encoders -> ensemble model.")
     ap.add_argument("--workers", type=int, default=1,
                     help="day-parallel featurize workers (0 = one per core)")
     args = ap.parse_args(argv)
 
-    stages = [args.only] if args.only else ["training", "validation"]
+    stages = args.stages
+    if "all" in stages:
+        stages = ["distributions", "ensemble-tables", "train",
+                  "ensemble-model"]
+
+    substages = [args.only] if args.only else ["training", "validation"]
     for symbol in args.symbols:
         for stage in stages:
-            run_stage(symbol,
-                      "monthly" if stage == "training" else "daily",
-                      list(args.validation_dates), args.workers)
+            if stage == "distributions":
+                for sub in substages:
+                    run_stage(symbol,
+                              "monthly" if sub == "training" else "daily",
+                              list(args.validation_dates), args.workers)
+            else:
+                run_downstream(symbol, stage, args.workers)
 
 
 if __name__ == "__main__":
