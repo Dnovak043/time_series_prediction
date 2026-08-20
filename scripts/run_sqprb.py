@@ -56,7 +56,7 @@ from pipeline.runner import run  # noqa: E402
 from run_april import detect_pattern, find_data_dir  # noqa: E402
 
 # ---- the experiment, as requested -------------------------------------------
-SYMBOLS = ["NVDA", "INTC"]
+SYMBOLS = ["NVDA", "AAPL", "INTC", "IBM"]
 PREDICTED = "log_mid"
 PREDICTORS = ["micro_price", "vpin", "ofi_L3_norm_n", "sigma_W"]
 CLASS_NAME = "ca4"
