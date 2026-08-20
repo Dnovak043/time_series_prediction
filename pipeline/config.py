@@ -108,7 +108,7 @@ class DataConfig:
                            advanced=True)
     dates: list = _f(lambda: ["20250401", "20250402"],
                      "Trading days to process, as yyyymmdd strings.")
-    instrument_filter: bool = _f(False,
+    instrument_filter: bool = _f(True,
                                  "Filter the raw event stream to `symbol` "
                                  "before featurizing. The raw files carry "
                                  "every subscribed symbol (NVDA+INTC "
@@ -169,11 +169,13 @@ class EncodeConfig:
 class DistributionConfig:
     """Symbol series -> subsequence and class-conditional distributions."""
     predicted: str = _f("log_mid", "Feature being predicted (first variate).")
-    predictors: list = _f(lambda: ["tvi_n", "obi_L1", "ofi_L1_n_norm",
-                                   "ofi_L3_norm_n", "ofi_L10_norm_n", "ofi_L1_n",
-                                   "ofi_L1_norm_n", "micro_price"],
+    predictors: list = _f(lambda: ["tvi_n", "sigma_W", "vpin",
+                                   "ofi_L1_norm_n", "ofi_L3_norm_n",
+                                   "ofi_L10_norm_n", "log_spread",
+                                   "imbalance"],
                           "Predictor features (second variate); one SEQ/CLS "
-                          "output pair is produced per predictor. A nested "
+                          "output pair is produced per predictor (his features[1:]). "
+                          "A nested "
                           "list entry is one multivariate predictor: "
                           "predicted + the listed features jointly encoded "
                           "(get_z_ts math, alphabet n_symbols^(1+len)) into "
@@ -186,18 +188,27 @@ class DistributionConfig:
                                           "(SEQ_DISTR_* outputs).")
     class_calculation: bool = _f(True, "Compute class-conditional distributions "
                                        "(CLS_DISTR_* outputs).")
+    save_seq_prob_weight: bool = _f(False,
+                                    "Also emit his per-day SQ_PRB_WT_{sym}_"
+                                    "{date} artifact: [sequences, seq_probs, "
+                                    "global_weights] for the (predicted, "
+                                    "predicted) encoding, weights from his "
+                                    "compute_global_weights (p(length) x "
+                                    "p(seq|length), normalised). His driver "
+                                    "writes it only in the training branch "
+                                    "(save_seq_prob_weight=True).")
     class_name: str = _f("c1", "Forward-move class definition (c{k}: k-step "
                                "return sign; ca{k}: fwd vs bwd sum).",
                          choices=["c1", "c2", "c4", "ca1", "ca2", "ca4"])
-    class_names: list = _f(lambda: [],
-                           "V2 multi-class sweep (cls_reference.py): one "
-                           "CLS output per listed class, named "
-                           "CLS_DISTR_{sym}__{predicted}-{predictor}_{month}_"
-                           "{cls}, with class columns ordered by "
-                           "class_values. EMPTY = legacy single-class mode "
-                           "(class_name above, old column order "
-                           "[P(0),P(+1),P(-1)], old naming) — the frozen-"
-                           "baseline behavior.")
+    class_names: list = _f(lambda: ["ca4"],
+                           "Multi-class sweep: one CLS output per listed "
+                           "class, named CLS_DISTR_{sym}_{predicted}-"
+                           "{predictor}_{month}_{cls}, with class columns "
+                           "ordered by class_values. Default ['ca4'] is his "
+                           "2026-08 driver's clsNames. EMPTY = legacy "
+                           "single-class mode (class_name above, old column "
+                           "order [P(0),P(+1),P(-1)], old naming) — the "
+                           "frozen-baseline behavior.")
     class_values: list = _f(lambda: [-1, 0, 1],
                             "Class column order for the v2 sweep "
                             "([P(-1),P(0),P(+1)] by default). Ignored in "
@@ -397,18 +408,28 @@ class RunConfig:
             return ("SEQ_DISTR_" + self.data.symbol + "_multivariate_"
                     + self.distributions.predicted + "-" + p[0] + "-" + p[-1]
                     + "_" + self.data.dates[0][:6])
-        return ("SEQ_DISTR_" + self.data.symbol + "_bivariate_"
+        # his 2026-08 driver (bivariate branch): the prefix became SQ_PRB_
+        # and the "_bivariate" segment was dropped --
+        #   seq_prob_file + symbol +'_'+ predicted +'-'+ predictor +'_'+ month
+        return ("SQ_PRB_" + self.data.symbol + "_"
                 + self.distributions.predicted + "-" + predictor
                 + "_" + self.data.dates[0][:6])
+
+    def seq_prob_weight_name(self, date: str) -> str:
+        """His SQ_PRB_WT_ name: one file per (symbol, day) -- no predictor
+        tag, because he builds it from the predicted feature alone."""
+        return "SQ_PRB_WT_" + self.data.symbol + "_" + date
 
     def cls_distr_name(self, predictor: str, cls_name: str | None = None) -> str:
         if cls_name is None:   # legacy single-class naming (frozen baseline)
             return ("CLS_DISTR_" + self.data.symbol + "_bivariate_"
                     + self.distributions.predicted + "-" + predictor
                     + "_" + self.data.dates[0][:6])
-        # v2 naming, verbatim from cls_reference.py's driver (including its
-        # double underscore and dropped "bivariate")
-        return ("CLS_DISTR_" + self.data.symbol + "_" + "_"
+        # his 2026-08 driver (bivariate branch) -- the earlier double
+        # underscore is gone:
+        #   cls_dist_file + symbol +'_'+ predicted +'-'+ predictor
+        #                 +'_'+ month +'_'+ clsName
+        return ("CLS_DISTR_" + self.data.symbol + "_"
                 + self.distributions.predicted + "-" + predictor
                 + "_" + self.data.dates[0][:6] + "_" + cls_name)
 

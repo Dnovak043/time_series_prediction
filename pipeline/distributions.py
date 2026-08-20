@@ -38,7 +38,14 @@ class DistributionBuilder:
         encoding (and later class) columns added; z_series12 is the combined
         int Series. The copy keeps repeated calls on a cached day independent.
         """
-        from process_distributions import z_encoding
+        # HIS z_encoding (process_distributions_v2 = his 2026-08 file,
+        # vendored verbatim). It is the ONE imported function whose math
+        # differs from the older module: his `bfill` mode now also
+        # forward-fills and patches a leading missing symbol, which changes
+        # the symbol stream. Every other function we import is numerically
+        # identical (add_event_features_and_resample differs only by our
+        # bit-identical fast_ops vectorisation).
+        from process_distributions_v2 import z_encoding
 
         e = self.encode_cfg
         predicted = self.dist_cfg.predicted
@@ -73,7 +80,14 @@ class DistributionBuilder:
 
         Returns the combined int Series.
         """
-        from process_distributions import z_encoding
+        # HIS z_encoding (process_distributions_v2 = his 2026-08 file,
+        # vendored verbatim). It is the ONE imported function whose math
+        # differs from the older module: his `bfill` mode now also
+        # forward-fills and patches a leading missing symbol, which changes
+        # the symbol stream. Every other function we import is numerically
+        # identical (add_event_features_and_resample differs only by our
+        # bit-identical fast_ops vectorisation).
+        from process_distributions_v2 import z_encoding
 
         e = self.encode_cfg
         variables = [self.dist_cfg.predicted] + list(predictors)

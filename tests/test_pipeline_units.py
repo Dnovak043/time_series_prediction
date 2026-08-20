@@ -102,8 +102,16 @@ def test_multivariate_predictor():
     # verbatim LearningKraus_multivariate naming: predicted-first-last
     assert cfg.seq_distr_name(trio) == (
         "SEQ_DISTR_NVDA_multivariate_log_mid-ofi_L10_norm_n-vpin_202504")
+    # bivariate sequence naming follows his 2026-08 driver: SQ_PRB_ prefix,
+    # no "_bivariate" segment (the multivariate name above is unchanged --
+    # his 2026-08 file has no multivariate output)
     assert cfg.seq_distr_name("tvi_n") == (
-        "SEQ_DISTR_NVDA_bivariate_log_mid-tvi_n_202504")
+        "SQ_PRB_NVDA_log_mid-tvi_n_202504")
+    # his CLS name: single underscore, month before class
+    assert cfg.cls_distr_name("tvi_n", cls_name="ca4") == (
+        "CLS_DISTR_NVDA_log_mid-tvi_n_202504_ca4")
+    # his per-day weighted artifact: one per (symbol, day), no predictor tag
+    assert cfg.seq_prob_weight_name("20250401") == "SQ_PRB_WT_NVDA_20250401"
 
     # validation: list training.predictor accepted iff listed; duplicate
     # variables in the joint encoding rejected

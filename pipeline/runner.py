@@ -87,6 +87,39 @@ def new_run_id(prefix: str = "run") -> str:
 
 
 # ---------------------------------------------------------------------------
+def _write_day_weights(cfg, root, date, builder, day_df):
+    """His SQ_PRB_WT_ artifact for one day, verbatim from the driver's
+    `if save_seq_prob_weight:` block:
+
+        all_subsequences, counts = <(predicted, predicted) encoding>
+        sequences   = [s for subsequence in all_subsequences for s in subsequence]
+        seq_probs   = [i[3] for c in counts for i in c]
+        global_weights = compute_global_weights(sequences, seq_probs)
+        pickle.dump([sequences, seq_probs, global_weights], ...)
+
+    Two quirks of his are preserved: the encoding pairs `predicted` with
+    ITSELF (he passes `predicted` as both arguments), and the file name
+    carries no predictor tag -- one file per symbol/day, not per predictor.
+    """
+    c = cfg.distributions
+    if not c.save_seq_prob_weight:
+        return None
+    from process_distributions_v2 import compute_global_weights
+
+    _ts, z12 = builder.encode_bivariate(day_df, c.predicted)
+    all_subsequences, counts = builder.sequence_counts(z12)
+    sequences = [s for subsequence in all_subsequences for s in subsequence]
+    seq_probs = [i[3] for cc in counts for i in cc]
+    weights = compute_global_weights(sequences, seq_probs)
+
+    out_dir = root / c.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / cfg.seq_prob_weight_name(date)
+    with open(path, "wb") as fh:
+        pickle.dump([sequences, seq_probs, weights], fh)
+    return str(path)
+
+
 def _process_day(cfg_dict: dict, date: str, root_str: str,
                  device) -> dict:
     """Worker for one day: featurize (via the shared cache) + encode + count
@@ -109,6 +142,10 @@ def _process_day(cfg_dict: dict, date: str, root_str: str,
     for predictor in c.predictors:
         r = _encode_and_count(builder, c, day_df, predictor, cls_keys)
         out[predictor_key(predictor)] = r
+    # per-day artifact: written here (not at the monthly fold) because his
+    # driver writes it inside the day loop; one independent file per day, so
+    # worker-count does not affect its bytes
+    _write_day_weights(cfg, root, date, builder, day_df)
     return out
 
 
@@ -213,6 +250,7 @@ def run(cfg: RunConfig, run_id: str | None = None,
                                 pct=100.0 * i / len(dates),
                                 message=f"{date} ({i + 1}/{len(dates)})")
                 day_df = cache.get(date)
+                _write_day_weights(cfg, root, date, builder, day_df)
                 day_result = {}
                 for predictor in predictors:
                     day_result[predictor_key(predictor)] = _encode_and_count(
