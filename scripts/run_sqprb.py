@@ -10,9 +10,11 @@ Outputs per security (defaults below), all under
       SQ_PRB_{sym}_log_mid-micro_price_202504
       SQ_PRB_{sym}_log_mid-vpin_202504
       SQ_PRB_{sym}_log_mid-ofi_L3_norm_n_202504
+      SQ_PRB_{sym}_log_mid-sigma_W_202504
       CLS_DISTR_{sym}_log_mid-micro_price_202504_ca4
       CLS_DISTR_{sym}_log_mid-vpin_202504_ca4
       CLS_DISTR_{sym}_log_mid-ofi_L3_norm_n_202504_ca4
+      CLS_DISTR_{sym}_log_mid-sigma_W_202504_ca4
 
   validation  (one file per predictor PER DAY, 20250501 / 02 / 05)
       SQ_PRB_{sym}_log_mid-{predictor}_{yyyymmdd}
@@ -56,7 +58,7 @@ from run_april import detect_pattern, find_data_dir  # noqa: E402
 # ---- the experiment, as requested -------------------------------------------
 SYMBOLS = ["NVDA", "INTC"]
 PREDICTED = "log_mid"
-PREDICTORS = ["micro_price", "vpin", "ofi_L3_norm_n"]
+PREDICTORS = ["micro_price", "vpin", "ofi_L3_norm_n", "sigma_W"]
 CLASS_NAME = "ca4"
 TRAIN_MONTH = "202504"
 # 20250503 is a SATURDAY - no session, no raw file. The first three May

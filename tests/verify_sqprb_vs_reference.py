@@ -14,14 +14,14 @@ his experiment:
 
     symbol      INTC
     predicted   log_mid
-    predictors  micro_price, vpin, ofi_L3_norm_n      (all three)
+    predictors  micro_price, vpin, ofi_L3_norm_n, sigma_W
     class       ca4
     training    monthly aggregate over every 202503 day on disk
     validation  daily: 20250401, 20250402, 20250403
 
-    -> training   3 SQ_PRB_ + 3 CLS_DISTR_   (month-tagged)
-       validation 9 SQ_PRB_ + 9 CLS_DISTR_   (date-tagged)
-       24 files compared in total.
+    -> training    4 SQ_PRB_ +  4 CLS_DISTR_   (month-tagged)
+       validation 12 SQ_PRB_ + 12 CLS_DISTR_   (date-tagged)
+       32 files compared in total.
 
 Comparison is sha256 byte-for-byte, the project standard. When bytes
 differ, both pickles are loaded and the FIRST structural/numeric
@@ -61,7 +61,7 @@ from pipeline.runner import run  # noqa: E402
 REFERENCE_DIR = "/home/ilu671742/vanio/experiments/kraus_models/data"
 SYMBOL = "INTC"
 PREDICTED = "log_mid"
-PREDICTORS = ["micro_price", "vpin", "ofi_L3_norm_n"]
+PREDICTORS = ["micro_price", "vpin", "ofi_L3_norm_n", "sigma_W"]
 CLASS_NAME = "ca4"
 TRAIN_MONTH = "202503"
 VALIDATION_DATES = ["20250401", "20250402", "20250403"]

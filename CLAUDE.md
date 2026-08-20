@@ -117,8 +117,9 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 - `tests/verify_sqprb_vs_reference.py` — our distributions stage in his
   2026-08 SQ_PRB_ scheme vs HIS OWN OUTPUT FILES (the oracle is his
   committed data directory, nothing is re-executed on that side).
-  Scope: INTC, log_mid x {micro_price, vpin, ofi_L3_norm_n}, class ca4,
-  202503 monthly training + 20250401/02/03 daily validation = 24 files.
+  Scope: INTC, log_mid x {micro_price, vpin, ofi_L3_norm_n, sigma_W},
+  class ca4, 202503 monthly training + 20250401/02/03 daily validation
+  = 32 files.
   sha256 byte-compare; on mismatch it unpickles both and prints the first
   differing path. Needs the reference dir (`--reference-dir`, default
   /home/ilu671742/vanio/experiments/kraus_models/data) — compute box only.
