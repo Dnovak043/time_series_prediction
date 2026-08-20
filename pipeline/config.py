@@ -108,7 +108,7 @@ class DataConfig:
                            advanced=True)
     dates: list = _f(lambda: ["20250401", "20250402"],
                      "Trading days to process, as yyyymmdd strings.")
-    instrument_filter: bool = _f(False,
+    instrument_filter: bool = _f(True,
                                  "Filter the raw event stream to `symbol` "
                                  "before featurizing. The raw files carry "
                                  "every subscribed symbol (NVDA+INTC "
@@ -169,11 +169,13 @@ class EncodeConfig:
 class DistributionConfig:
     """Symbol series -> subsequence and class-conditional distributions."""
     predicted: str = _f("log_mid", "Feature being predicted (first variate).")
-    predictors: list = _f(lambda: ["tvi_n", "obi_L1", "ofi_L1_n_norm",
-                                   "ofi_L3_norm_n", "ofi_L10_norm_n", "ofi_L1_n",
-                                   "ofi_L1_norm_n", "micro_price"],
+    predictors: list = _f(lambda: ["tvi_n", "sigma_W", "vpin",
+                                   "ofi_L1_norm_n", "ofi_L3_norm_n",
+                                   "ofi_L10_norm_n", "log_spread",
+                                   "imbalance"],
                           "Predictor features (second variate); one SEQ/CLS "
-                          "output pair is produced per predictor. A nested "
+                          "output pair is produced per predictor (his features[1:]). "
+                          "A nested "
                           "list entry is one multivariate predictor: "
                           "predicted + the listed features jointly encoded "
                           "(get_z_ts math, alphabet n_symbols^(1+len)) into "
@@ -186,18 +188,47 @@ class DistributionConfig:
                                           "(SEQ_DISTR_* outputs).")
     class_calculation: bool = _f(True, "Compute class-conditional distributions "
                                        "(CLS_DISTR_* outputs).")
+    output_mode: str = _f("monthly",
+                          "Which of his two driver branches to reproduce. "
+                          "'monthly' = his training branch: aggregate every "
+                          "date in `dates` into one file per predictor, named "
+                          "with the month. 'daily' = his validation branch: "
+                          "one file per (predictor, DAY), named with the full "
+                          "date, and no aggregation. The payloads differ, as "
+                          "they do in his code: monthly SEQ is "
+                          "[distrs, samples] and monthly CLS the 4-field "
+                          "rows, while daily SEQ is [sequences, seq_probs] "
+                          "and daily CLS [[subsequence, class_probs], ...].",
+                          choices=["monthly", "daily"])
+    class_tag_in_name: bool = _f(True,
+                                 "Include the class name in CLS_DISTR_ file "
+                                 "names, as his driver does "
+                                 "(monthly '..._{month}_{cls}', daily "
+                                 "'..._{cls}_{date}'). False drops it, which "
+                                 "is unambiguous only while a single class is "
+                                 "swept -- with several classes the files "
+                                 "would collide.")
+    save_seq_prob_weight: bool = _f(False,
+                                    "Also emit his per-day SQ_PRB_WT_{sym}_"
+                                    "{date} artifact: [sequences, seq_probs, "
+                                    "global_weights] for the (predicted, "
+                                    "predicted) encoding, weights from his "
+                                    "compute_global_weights (p(length) x "
+                                    "p(seq|length), normalised). His driver "
+                                    "writes it only in the training branch "
+                                    "(save_seq_prob_weight=True).")
     class_name: str = _f("c1", "Forward-move class definition (c{k}: k-step "
                                "return sign; ca{k}: fwd vs bwd sum).",
                          choices=["c1", "c2", "c4", "ca1", "ca2", "ca4"])
-    class_names: list = _f(lambda: [],
-                           "V2 multi-class sweep (cls_reference.py): one "
-                           "CLS output per listed class, named "
-                           "CLS_DISTR_{sym}__{predicted}-{predictor}_{month}_"
-                           "{cls}, with class columns ordered by "
-                           "class_values. EMPTY = legacy single-class mode "
-                           "(class_name above, old column order "
-                           "[P(0),P(+1),P(-1)], old naming) — the frozen-"
-                           "baseline behavior.")
+    class_names: list = _f(lambda: ["ca4"],
+                           "Multi-class sweep: one CLS output per listed "
+                           "class, named CLS_DISTR_{sym}_{predicted}-"
+                           "{predictor}_{month}_{cls}, with class columns "
+                           "ordered by class_values. Default ['ca4'] is his "
+                           "2026-08 driver's clsNames. EMPTY = legacy "
+                           "single-class mode (class_name above, old column "
+                           "order [P(0),P(+1),P(-1)], old naming) — the "
+                           "frozen-baseline behavior.")
     class_values: list = _f(lambda: [-1, 0, 1],
                             "Class column order for the v2 sweep "
                             "([P(-1),P(0),P(+1)] by default). Ignored in "
@@ -254,6 +285,95 @@ class EnsembleConfig:
                           advanced=True)
     output_dir: str = _f("outputs/ensemble",
                          "Where ENS_TD_* pickles are written.")
+
+
+@dataclass
+class EnsembleModelConfig:
+    """LearningEnsemble.py stage: multi-encoder quantum ensemble. Frozen
+    pre-trained Kraus encoders (the WGHTS_* files in training.model_dir) +
+    a QuantumDecoder trained on the ENS_TD_* tables (ensemble.output_dir)
+    to predict the class distribution. Field defaults are the colleague's
+    driver values verbatim."""
+    class_names: list = _f(lambda: ["c2", "ca4"],
+                           "One trained ensemble per class definition (his "
+                           "driver holds a single clsName and is re-run per "
+                           "class). Each model is written under "
+                           "{model_dir}/{cls}/ with his ENS_MD_* name "
+                           "unchanged — the name itself carries no class "
+                           "tag, so the per-class directory is what keeps "
+                           "the models apart.")
+    seq_lens: list = _f(lambda: [1, 2, 3, 4],
+                        "ENS_TD sequence lengths loaded for training — his "
+                        "driver's effective list (the ensemble stage also "
+                        "writes SL_5; it is simply not read).")
+    channels: list = _f(lambda: ["ofi_L10_norm_n", "micro_price", "vpin",
+                                 ["ofi_L10_norm_n", "micro_price", "vpin"]],
+                        "Encoder channels — his `predictors`: 3 bivariate + "
+                        "the joint multivariate. Must match the channel "
+                        "order of the ENS_TD tables (ensemble.predictors). "
+                        "NOTE, verbatim from his driver: every channel's "
+                        "encoder is loaded, but the trained ensemble uses "
+                        "only the first n-1 encoders — the multivariate "
+                        "channel is deliberately excluded.")
+    channel_names: list = _f(lambda: ["ofi_L10_norm_n", "micro_price",
+                                      "vpin", "L10_micro_vpin"],
+                             "File-name tag per channel — his "
+                             "`predictors_names`; locates each channel's "
+                             "WGHTS_*.pt in training.model_dir.")
+    channel_qubits: list = _f(lambda: [3, 3, 3, 6],
+                              "Encoder register size per channel — his "
+                              "`qubits`; d = 2^q per encoder.")
+    epochs: int = _f(200, "Decoder training epochs (his driver).")
+    batch_size: int = _f(3072, "Batch size — his 6*512.")
+    lr: float = _f(2e-4, "Learning rate (his comment: 5e-3 was too high).")
+    prediction_loss: str = _f("ce", "Decoder training objective.",
+                              choices=["ce", "kl", "js", "mse"])
+    d_out: int = _f(3, "Decoder output dimension = number of classes.",
+                    advanced=True)
+    use_unitary: bool = _f(True, "Learn a unitary before the co-isometry in "
+                                 "the decoder.", advanced=True)
+    normalization_point: str = _f("input", "Where the decoder normalizes "
+                                          "the density matrix.",
+                                  choices=["input", "after_unitary",
+                                           "output"], advanced=True)
+    lambda_enc: float = _f(0.0, "Weight of the encoder loss (his run: 0 = "
+                                "decoder-only objective).", advanced=True)
+    lambda_pred: float = _f(1.0, "Weight of the prediction loss.",
+                            advanced=True)
+    freeze_encoders: bool = _f(True, "Keep the pre-trained encoders fixed "
+                                     "(his run).", advanced=True)
+    freeze_decoder: bool = _f(False, "Freeze the decoder instead (unusual).",
+                              advanced=True)
+    length_weighting: str = _f("equal", "How sequence lengths are weighted "
+                                        "when flattening the per-length "
+                                        "ENS_TD tables.",
+                               choices=["equal", "counts"], advanced=True)
+    exclude_last_channel: bool = _f(True,
+                                    "Ensemble only the first n-1 encoders, "
+                                    "as his driver does — there the last "
+                                    "channel is the multivariate one, which "
+                                    "he loads and shape-checks but leaves "
+                                    "out of the trained ensemble. With an "
+                                    "all-bivariate channel list there is no "
+                                    "multivariate channel to exclude, so "
+                                    "leaving this True would silently drop a "
+                                    "real feature; set False to ensemble all "
+                                    "of them.")
+    evaluate: bool = _f(True, "Run his agreement evaluation after training; "
+                              "the headline metrics land in the result.")
+    eval_batch_size: int = _f(32, "Evaluation batch size — his value; kept "
+                                  "small because the product-state rho is "
+                                  "dense.", advanced=True)
+    device: str = _f("auto", "Compute device. Replaces the driver's "
+                             "hardcoded gpu_id=1 ([vendoring fix 2]): auto "
+                             "= cuda if available else cpu; 'cuda:N' pins "
+                             "one training to one GPU (how the fan-out "
+                             "schedules).",
+                     choices=["auto", "cuda", "cpu", "mps"], free_form=True,
+                     options_provider="devices", validator="device")
+    model_dir: str = _f("outputs/ensemble_models",
+                        "Base directory for the trained ensembles; each "
+                        "class writes to {model_dir}/{cls}/ENS_MD_*.")
 
 
 @dataclass
@@ -335,6 +455,19 @@ class TrainingConfig:
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
+    weights_scheme: str = _f("ensemble",
+                             "Filename convention for the trained encoder. "
+                             "'ensemble' (default) = "
+                             "WGHTS_{sym}_{variate}_{predicted}-{tag}_{month}"
+                             "_{q}q.pt, the form LearningEnsemble.py loads, "
+                             "so training feeds the ensemble stage directly. "
+                             "'qmod' = WGHTS_QMOD_{sym}_{predicted}-{tag}_"
+                             "{q}q_{month}.pt, his 2026-08 LearningKraus "
+                             "driver. His own two files disagree on this: "
+                             "his trainer writes qmod, his ensemble reads "
+                             "the other. Both stages here read THIS field, "
+                             "so whichever you pick they stay consistent.",
+                             choices=["ensemble", "qmod"])
     predictors: list = _f(lambda: [],
                           "Predictors for `train-all` (one model per predictor); "
                           "empty = train all of distributions.predictors.",
@@ -350,6 +483,11 @@ class TrainingConfig:
                               "per GPU, else 1 (CPU). Each 3-qubit model uses "
                               "only a few percent of an A100, so values above "
                               "the GPU count are reasonable.")
+    print_every: int = _f(1,
+                          "Epoch print cadence during training. 1 = every "
+                          "epoch, his 2026-02 driver. 100 = his 2026-08 "
+                          "driver's `if ep % 100 == 0`. Console output only "
+                          "— never results.", advanced=True)
     seed: int = _f(-1, "Torch seed for training. -1 = unseeded, the original "
                        "main() behavior (results vary run to run).")
 
@@ -362,6 +500,7 @@ STAGES = {
     "distributions": DistributionConfig,
     "ensemble": EnsembleConfig,
     "training": TrainingConfig,
+    "ensemble_model": EnsembleModelConfig,
 }
 
 
@@ -373,6 +512,8 @@ class RunConfig:
     distributions: DistributionConfig = field(default_factory=DistributionConfig)
     ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    ensemble_model: EnsembleModelConfig = field(
+        default_factory=EnsembleModelConfig)
 
     # -- derived values -----------------------------------------------------
     @property
@@ -389,7 +530,9 @@ class RunConfig:
     def vol_window(self) -> int:
         return self.featurize.vol_window or 3 * self.featurize.frequency
 
-    def seq_distr_name(self, predictor) -> str:
+    def seq_distr_name(self, predictor, date: str | None = None) -> str:
+        """`date=None` -> his monthly (training) name, tagged with the month
+        of dates[0]. `date="YYYYMMDD"` -> his daily (validation) name."""
         if not isinstance(predictor, str):
             # verbatim from the LearningKraus_multivariate driver: predicted
             # + first + last predictor, dash-joined
@@ -397,20 +540,62 @@ class RunConfig:
             return ("SEQ_DISTR_" + self.data.symbol + "_multivariate_"
                     + self.distributions.predicted + "-" + p[0] + "-" + p[-1]
                     + "_" + self.data.dates[0][:6])
-        return ("SEQ_DISTR_" + self.data.symbol + "_bivariate_"
+        # his 2026-08 driver (bivariate branch): the prefix became SQ_PRB_
+        # and the "_bivariate" segment was dropped --
+        #   seq_prob_file + symbol +'_'+ predicted +'-'+ predictor +'_'+ month
+        return ("SQ_PRB_" + self.data.symbol + "_"
                 + self.distributions.predicted + "-" + predictor
-                + "_" + self.data.dates[0][:6])
+                + "_" + (date or self.data.dates[0][:6]))
 
-    def cls_distr_name(self, predictor: str, cls_name: str | None = None) -> str:
+    def model_names(self, tag: str, n_qubits: int,
+                    multivariate: bool = False) -> tuple[str, str]:
+        """(model pickle name, weights name) for one trained encoder.
+
+        Single source of truth: pipeline.models WRITES these and
+        pipeline.ensemble_model READS the weights one, so the trainer and
+        the ensemble stage cannot drift apart. Selected by
+        training.weights_scheme -- see that field for why the choice
+        exists.
+        """
+        variate = "multivariate" if multivariate else "bivariate"
+        month = self.data.dates[0][:6]
+        sym, pred = self.data.symbol, self.distributions.predicted
+        if self.training.weights_scheme == "qmod":
+            stem = f"QMOD_{sym}_{pred}-{tag}_{n_qubits}q_{month}"
+            return stem, f"WGHTS_{stem}.pt"
+        stem = f"{sym}_{variate}_{pred}-{tag}_{month}_{n_qubits}q"
+        return f"MOD_{stem}", f"WGHTS_{stem}.pt"
+
+    def seq_prob_weight_name(self, date: str) -> str:
+        """His SQ_PRB_WT_ name: one file per (symbol, day) -- no predictor
+        tag, because he builds it from the predicted feature alone."""
+        return "SQ_PRB_WT_" + self.data.symbol + "_" + date
+
+    def cls_distr_name(self, predictor: str, cls_name: str | None = None,
+                       date: str | None = None) -> str:
+        """`date=None` -> his monthly name '..._{month}_{cls}';
+        `date` given -> his daily name '..._{cls}_{date}' (he orders the two
+        fields differently in the two branches). The class tag is omitted
+        when distributions.class_tag_in_name is False."""
         if cls_name is None:   # legacy single-class naming (frozen baseline)
+            # `date` must still win here: in daily mode every day would
+            # otherwise resolve to the same month-tagged name and silently
+            # overwrite the previous day's file.
             return ("CLS_DISTR_" + self.data.symbol + "_bivariate_"
                     + self.distributions.predicted + "-" + predictor
-                    + "_" + self.data.dates[0][:6])
-        # v2 naming, verbatim from cls_reference.py's driver (including its
-        # double underscore and dropped "bivariate")
-        return ("CLS_DISTR_" + self.data.symbol + "_" + "_"
-                + self.distributions.predicted + "-" + predictor
-                + "_" + self.data.dates[0][:6] + "_" + cls_name)
+                    + "_" + (date or self.data.dates[0][:6]))
+        # his 2026-08 driver (bivariate branch) -- the earlier double
+        # underscore is gone:
+        #   cls_dist_file + symbol +'_'+ predicted +'-'+ predictor
+        #                 +'_'+ month +'_'+ clsName
+        head = ("CLS_DISTR_" + self.data.symbol + "_"
+                + self.distributions.predicted + "-" + predictor)
+        tag = cls_name if self.distributions.class_tag_in_name else None
+        if date is None:                      # monthly: ..._{month}[_{cls}]
+            out = head + "_" + self.data.dates[0][:6]
+            return out + "_" + tag if tag else out
+        # daily: ..._[{cls}_]{date}
+        return head + "_" + (tag + "_" if tag else "") + date
 
     # -- (de)serialization ----------------------------------------------------
     def to_dict(self) -> dict:
@@ -516,6 +701,25 @@ class RunConfig:
                 problems.append(f"ensemble channel {list(ch)!r}: duplicate "
                                 f"variables in joint encoding {variables} "
                                 "(get_z_ts would raise)")
+        em = self.ensemble_model
+        if not (len(em.channels) == len(em.channel_names)
+                == len(em.channel_qubits)):
+            problems.append(
+                "ensemble_model.channels / channel_names / channel_qubits "
+                f"must be the same length, got {len(em.channels)} / "
+                f"{len(em.channel_names)} / {len(em.channel_qubits)}")
+        for cls in em.class_names:
+            if cls not in self.ensemble.class_names:
+                problems.append(
+                    f"ensemble_model.class_names entry {cls!r} is not in "
+                    "ensemble.class_names — no ENS_TD_* tables would exist "
+                    "for it")
+        for k in em.seq_lens:
+            if k not in self.ensemble.seq_lengths:
+                problems.append(
+                    f"ensemble_model.seq_lens entry {k!r} is not in "
+                    "ensemble.seq_lengths — no ENS_TD_* tables would exist "
+                    "for it")
         return problems
 
 

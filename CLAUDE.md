@@ -48,6 +48,23 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `kraus`), `parallel.py` (`train-all`: one predictor per GPU), `ui.py`
   (ipywidgets panel, `pipeline_control.ipynb`), `cli.py`
   (`python -m pipeline run|ensemble|train|train-all|...`).
+- `LearningEnsemble.py` (repo root) — colleague's multi-encoder quantum
+  ensemble (frozen pre-trained Kraus encoders + trained QuantumDecoder →
+  class distribution), vendored verbatim (CRLF) with two disclosed fixes:
+  `[vendoring fix 1]` guards a bare module-level `sys.exit()` that killed
+  any importer; `[vendoring fix 2]` marks the driver's hardcoded
+  `gpu_id = 1` — pipeline runs take `ensemble_model.device` from the
+  config instead. `pipeline/ensemble_model.py` is the config seam
+  (`EnsembleModelConfig`, defaults = his driver verbatim; CLI
+  `python -m pipeline ensemble-model`). It consumes the v2 ENS_TD_*
+  tables + the 4 WGHTS_* encoders; one model per
+  `ensemble_model.class_names` entry (c2, ca4), each in its own
+  `{model_dir}/{cls}/` because his `ENS_MD_{sym}_{month}_` name carries
+  no class tag and would self-overwrite. Verbatim quirks kept: only the
+  first n−1 encoders enter the trained ensemble (multivariate loaded but
+  excluded); seq_lens [1,2,3,4] (SL_5 exists, unread); per-channel
+  alphabet m derived from the data (`1+max(X[-1])`), failing loudly on
+  mismatch.
 - `TrainingDistributions/` — legacy + vendored research code.
   `process_distributions.py` and `LearningKraus.py` are the original scripts
   (CRLF, `__main__`-guarded, optimized call sites swapped in);
@@ -114,6 +131,15 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `tests/verify_cls_v2.py` — vendored colleague code run his way vs
   pipeline stages, byte-for-byte. All three PASSED (v2 ensemble:
   2026-07-16, 1-day scope).
+- `tests/verify_sqprb_vs_reference.py` — our distributions stage in his
+  2026-08 SQ_PRB_ scheme vs HIS OWN OUTPUT FILES (the oracle is his
+  committed data directory, nothing is re-executed on that side).
+  Scope: INTC, log_mid x {micro_price, vpin, ofi_L3_norm_n, sigma_W},
+  class ca4, 202503 monthly training + 20250401/02/03 daily validation
+  = 32 files.
+  sha256 byte-compare; on mismatch it unpickles both and prints the first
+  differing path. Needs the reference dir (`--reference-dir`, default
+  /home/ilu671742/vanio/experiments/kraus_models/data) — compute box only.
 - `tests/verify_multivariate_seq.py` — multivariate SEQ_DISTR (input to
   the multivariate Kraus model) + its training-load filtering vs the
   colleague's code composed his way (his get_z_ts, the pure-Python
@@ -128,25 +154,56 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 - `april_smoke.ipynb` — 1-day / 5-epoch check of every April stage,
   **including the stage-3 fan-out** (`plan_training` +
   `run_training_jobs`, not just a direct `train_model` call — the cell
-  that only called the trainer let a real fan-out bug through). Run
-  before `april_run.ipynb`. PASSED (user-run, 2026-07-20, all 3 symbols,
-  fan-out included).
+  that only called the trainer let a real fan-out bug through) and an
+  exact-filename check of the `WGHTS_*` deliverables. Direct-call cell
+  trains only the first symbol's two models (code-path check); the
+  fan-out cell trains all 6 across GPUs and asserts the jobs spread over
+  distinct devices — the sequential single-GPU part is deliberately
+  minimal. Run before `april_run.ipynb`. The pre-group-split version
+  PASSED (user-run, 2026-07-20); the reworked 2-group version has **not
+  been user-run yet**.
 
-## Current state (2026-07-20)
+## Current state (2026-07-27)
 
-- **PRs #1–#10 all merged into `dev`; no open PRs, no feature branches.**
-  Branch picture: `main` (locked, frozen baseline) + `dev` (everything).
+- **PRs #1–#10 merged into `dev`. TWO OPEN PRs:**
+  - **#11** `worktree-vanio-new-experiments` — his 2026-02 drivers: 12 Kraus
+    models per run + the LearningEnsemble stage-4 decoders.
+  - **#12** `worktree-process-distributions-v2` — his 2026-08
+    `process_distributions`: the SQ_PRB_ scheme, daily/validation branch,
+    and the end-to-end `scripts/run_sqprb.py`. **Stacked on #11** (it
+    merges that branch in), so merge #11 first.
+  Branch picture: `main` (locked, frozen baseline) + `dev` + those two.
   Every equivalence suite was user-run and PASSED before its merge.
-- The April experiment covers **NVDA, INTC, and IBM**: run
+- **The SQ_PRB scheme (#12) changes distribution output names**: sequences
+  are `SQ_PRB_{sym}_{predicted}-{predictor}_{month}` (was
+  `SEQ_DISTR_{sym}_bivariate_...`) and CLS drops the double underscore.
+  The multivariate SEQ name is unchanged. `distributions.output_mode`
+  selects his monthly (training) or daily (validation) branch — they
+  differ in payload, not only naming. See PIPELINE_GUIDE §2.
+- The April experiment covers **NVDA, INTC, and IBM** and reproduces the
+  colleague's two current drivers (his 2026-02 `LearningKraus.py` +
+  `LearningKraus_multivariate.py`, run by him for AAPL): run
   `april_smoke.ipynb` first, then `april_run.ipynb` (Linux params baked in:
-  workers=0, ensemble on) or `scripts/run_april.py`. Per symbol: 10 SEQ +
-  50 CLS-v2 + 20 v2 ENS_TD files + 3 trained Kraus models (2 result files +
-  4 charts each, sent per-model) — 9 models total. Training defaults =
-  original `LearningKraus.main()` values, audited field by field against
-  it. NVDA/INTC read from `data/NVDA_INTC` (interleaved, filtered per
-  symbol); IBM from `data/IBM`, resolved via `data.asset_paths`.
-  **Smoke PASSED (user-run) on the compute box, all 3 symbols, fan-out
-  included** — the April run has not yet been executed at full scale.
+  workers=0, ensemble on) or `scripts/run_april.py`. Per symbol: 11 SEQ
+  (10 bivariate + 1 multivariate joint) + 50 CLS-v2 + 20 v2 ENS_TD files +
+  **4 trained Kraus models** (2 result files + 4 charts each, sent
+  per-model) — 12 models total. Two **training groups** per symbol, each
+  its own generated config (`run_april.TRAIN_GROUPS`; one config holds one
+  training block): group 0 = his bivariate driver — vpin, ofi_L10_norm_n,
+  micro_price, **sgd**, batch 8*512, 3q, max_seq_len 6; group 1 = his
+  multivariate driver — [ofi_L10_norm_n, micro_price, vpin], abbrev
+  `L10_micro_vpin`, adam, batch 6*512, 6q, max_seq_len 4. Both: 3000
+  epochs, lr 1e-3, nll_seq, learn_rho0, unseeded. Stage 2 runs once per
+  symbol (the group configs share every distribution setting). NVDA/INTC
+  read from `data/NVDA_INTC` (interleaved, filtered per symbol); IBM from
+  `data/IBM`, resolved via `data.asset_paths`.
+  **The reworked smoke (2 groups, exact-WGHTS-name checks, stage 4) has
+  NOT been user-run yet**; the 2026-07-20 smoke PASS predates the group
+  split. The 12-model April run was executed on the box (2026-07-28,
+  outputs zipped onto dev as NVDA/INTC/IBM.zip); **stage 4** (the
+  LearningEnsemble models, `--only-ensemble-models` /
+  `RUN_ENSEMBLE_MODELS`) runs on top of those existing outputs — 3
+  symbols × (c2, ca4) = 6 decoder trainings, fanned like stage 3.
 - Ensemble v2 (PR #6) is the default; multivariate Kraus (PR #7) is
   integrated (256-symbol alphabet — a compute-box job, not a Mac job);
   per-asset data paths (PR #8) resolve each symbol's directory.
@@ -156,12 +213,15 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
   `training.seed`, `num_workers`, `eval_batch_size` and `plot_dpi` are all
   config fields the trainer reads. `tests/train_kraus_baseline.py` remains
   only as a standalone independent cross-check.
-- **Model files are `MOD_*` / `WGHTS_MOD_*`.** The old harness emitted
-  `MODR_*` (an off-by-one: `title[8:]` on the 10-char `SEQ_DISTR_`
-  prefix, kept at the time as an "original quirk"). Retired by the user's
-  decision, so **filenames from current runs will not match any
-  pre-2026-07-20 batch**, and a byte-comparison against
-  `train_kraus_baseline.py` must account for it.
+- **Model files are `MOD_*` / `WGHTS_*` (no `MOD_` infix in WGHTS), both
+  modes** — verbatim from the colleague's current drivers, e.g.
+  `WGHTS_{sym}_bivariate_log_mid-vpin_202504_3q.pt` and
+  `WGHTS_{sym}_multivariate_log_mid-L10_micro_vpin_202504_6q.pt`. Retired
+  conventions: `MODR_*`/`WGHTS_MODR_*` (pre-2026-07-20, the `title[8:]`
+  off-by-one) and `WGHTS_MOD_*` (2026-07-20 consolidation, his older
+  driver's form). **Filenames from current runs match neither earlier
+  batch**, and a byte-comparison against `train_kraus_baseline.py` must
+  account for it.
 - **Stage-3 GPU fan-out (PR #10).** The 3-qubit model is tiny (m=16
   operators of d=8, ~2k params) and is kernel-launch-latency bound, so one
   training uses a few percent of an A100 — sequential training left 7 of 8

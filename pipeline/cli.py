@@ -9,6 +9,9 @@ CLI: python -m pipeline <command>
   ensemble  --config <path>   fixed-length ensemble tables (ENS_TD_* outputs)
   train     --config <path>   train the configured model on a SEQ_DISTR file
   train-all --config <path>   one training per predictor, parallel across GPUs
+  ensemble-model --config <path>  multi-encoder ensemble (LearningEnsemble.py):
+                              one ENS_MD_* model per ensemble_model.class_names
+                              entry, each in its own {model_dir}/{cls}/ dir
   status    [--run-id <id>]   show progress of the latest (or given) run
   runs                        list known run ids
 """
@@ -42,10 +45,11 @@ def main(argv=None):
     p.add_argument("path", nargs="?", default="run.yaml")
 
     for name in ("validate", "featurize", "run", "ensemble", "train",
-                 "train-all"):
+                 "train-all", "ensemble-model"):
         p = sub.add_parser(name)
         p.add_argument("--config", required=True)
-        if name in ("run", "ensemble", "train", "train-all"):
+        if name in ("run", "ensemble", "train", "train-all",
+                    "ensemble-model"):
             p.add_argument("--run-id", default=None)
 
     p = sub.add_parser("status", help="show run progress")
@@ -104,6 +108,14 @@ def main(argv=None):
         print(json.dumps(results, indent=1))
         if any(r["status"] != "completed" for r in results.values()):
             sys.exit(1)
+        return
+
+    if args.cmd == "ensemble-model":
+        from .ensemble_model import run_ensemble_models
+        cfg = _load(args)
+        results = run_ensemble_models(cfg, run_id=args.run_id)
+        for cls, r in results.items():
+            print(cls, "->", r["model_file"])
         return
 
     if args.cmd == "status":

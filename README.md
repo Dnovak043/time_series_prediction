@@ -35,13 +35,13 @@ one 16-letter symbol stream per (predicted, predictor) pair per day
       │  (down/flat/up) observed at the end of each occurrence
       ▼
 empirical distributions, aggregated over a month
-  ├── SEQ_DISTR_*  P(pattern)                      → trains Kraus models
+  ├── SQ_PRB_*     P(pattern)                      → trains Kraus models
   ├── CLS_DISTR_*  P(class | pattern)              → analysis / class prediction
   └── ENS_TD_*     joint + per-channel tables      → trains ensembles
       ▼
 models
   ├── KrausInstrument (LearningKraus.py): 16 complex d×d operators, d=2^3;
-  │   P(s₁…s_T) = Tr(K_{s_T}···K_{s_1} ρ₀ K†…) fitted to SEQ_DISTR by NLL
+  │   P(s₁…s_T) = Tr(K_{s_T}···K_{s_1} ρ₀ K†…) fitted to SQ_PRB by NLL
   │   — or, multivariate: 256 operators, d=2^6, fitted to the joint-channel
   │   SEQ_DISTR (LearningKraus_multivariate driver; identical library code)
   └── ensemble of channel models (colleague's line of work; ENS_TD_* is
@@ -85,6 +85,8 @@ channel pairs it with several at once); it appears in every filename.
 | `TrainingDistributions/plot_distributions.py` | Chart helpers; `plotDistributions` draws in chunks of 62 → the characteristic 4 charts per trained model. |
 | `LearningKraus.py` | The Kraus model + training loop (guarded original script). `pipeline/models.py` calls `train()` with explicit parameters. Two disclosed deltas from the colleague's original: our `on_epoch` progress callback, and **`[vendoring fix 1]`** — `train()`'s DataLoader hardcoded `num_workers=0`, making its own `num_workers` argument dead (so the original `main()`'s `num_workers=8` never took effect); it now honours the argument, which is results-neutral. His `LearningKraus_multivariate.py` has library code identical apart from those two deltas (only its driver differs: 256-symbol joint alphabet, n_qubits 6), so the multivariate trainer imports this same module — no second vendored copy. |
 | `april_run.ipynb` / `scripts/run_april.py` | The current flagship experiment (notebook and identical CLI): NVDA, INTC, and IBM, all April, full spec — see §5. |
+| `scripts/run_sqprb.py` | Drives the SQ_PRB experiment end to end: distributions → ENS_TD tables → Kraus encoders → ensemble model, for NVDA/AAPL/INTC/IBM. Stage-major, so CPU stages run securities concurrently and GPU stages fan every job across the visible devices. |
+| `TrainingDistributions/process_distributions_v2.py` | The colleague's 2026-08 `process_distributions`, vendored verbatim (CRLF) with two disclosed fixes. Source of the `SQ_PRB_` scheme and the byte-oracle for it. |
 | `scripts/export_feb_features.py` | One-off deliverable for the colleague: raw feature columns (no encoding/distributions) for 3 Feb days × AAPL/NVDA × {100 events, 1 second} × feature set → one file each, 12 total. Feature-name mapping documented in its docstring. |
 | `april_smoke.ipynb` | 1-day / 5-epoch plumbing check of every April stage **including the GPU fan-out**; run before the real thing. |
 | `pipeline_control.ipynb` | The interactive control panel (all knobs, launch/monitor, results plots). |
@@ -115,7 +117,7 @@ channel pairs it with several at once); it appears in every filename.
 
 ## 4. Artifact formats (pickle schemas)
 
-**`SEQ_DISTR_{sym}_bivariate_{predicted}-{predictor}_{yyyymm}`**
+**`SQ_PRB_{sym}_{predicted}-{predictor}_{yyyymm}`** (training; per-day validation files are `..._{yyyymmdd}`)
 `[distrs, samples]` where `distrs = [[sequence, probability], …]`
 (sequence = list of ints 0–15, lengths 1–6, observed patterns only) and
 `samples = [sequence, …]` in the same order. Training input for Kraus models.
@@ -156,12 +158,14 @@ encoding (symbols 0–15) or, in v2, optionally a joint encoding of predicted
 0–4^(1+len)−1) — channel alphabets may differ within one file.
 
 **Models**: `MOD…_{n}q` = pickle `[model, sequences, emp_probs]` (full
-nn.Module + training set); `WGHTS_MOD…_{n}q.pt` = `torch.save` of
+nn.Module + training set); `WGHTS…_{n}q.pt` = `torch.save` of
 `{"model_state", "meta"}` (meta: m, n_qubits, d, learn_rho0, symbol,
-predictor, epochs, seed). Multivariate models follow the colleague's
-driver naming instead:
+predictor, epochs, seed). Naming follows the colleague's current drivers
+verbatim — the `WGHTS_` name carries **no `MOD_` infix** in either mode:
+bivariate `MOD_{sym}_bivariate_{predicted}-{predictor}_{yyyymm}_{n}q` /
+`WGHTS_{sym}_bivariate_…_{n}q.pt`; multivariate
 `MOD_{sym}_multivariate_{predicted}-{tag}_{yyyymm}_{n}q` /
-`WGHTS_{sym}_multivariate_…_{n}q.pt` (no `MOD_` infix — his convention),
+`WGHTS_{sym}_multivariate_…_{n}q.pt`,
 where `tag` is `training.predictor_abbrev` (his `L10_micro_vpin`) or
 `{first}-{last}`. Per trained model you also get 4 PNG charts
 (`{sym}_{yyyymm}_{predicted}-{predictor}_{n}q_1..4.png`) — target-vs-model
@@ -266,10 +270,11 @@ for 2 days × 8 predictors, identical bytes; colleague's ensemble scope
   `[vendoring fix N]`-marked corrections; pipeline stages import its math
   functions rather than reimplementing them.
 - Naming quirks are preserved deliberately where outputs must match the
-  original programs (the v2 CLS double underscore; the multivariate
-  `WGHTS_` without a `MOD_` infix). **One was retired:** the bivariate
-  model name is now `MOD_…`, not the old `MOD` + `title[8:]` → `MODR_…`
-  off-by-one, so filenames from current runs differ from any batch made
-  before 2026-07-20.
+  original programs (the v2 CLS double underscore; `WGHTS_` without a
+  `MOD_` infix, per the colleague's current drivers). **Two were retired:**
+  the old `MOD` + `title[8:]` → `MODR_…` off-by-one (pre-2026-07-20
+  batches), and the `WGHTS_MOD_*` bivariate form of his older driver
+  (the 2026-07-20 consolidation) — filenames from current runs differ
+  from both.
 - The original scripts ran their whole pipeline at import; they are now
   `__main__`-guarded but otherwise behave identically when run directly.

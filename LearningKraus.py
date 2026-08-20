@@ -387,6 +387,12 @@ def train(
     length_mixture: Literal["uniform","geometric","none"] = "uniform",
     alpha: float = 0.95,
     on_epoch=None,   # optional callback(epoch, total_epochs, avg_loss) for progress reporting
+    print_every=1,   # [delta 2] print cadence. His 2026-02 driver
+                     # prints every epoch (print_every=1, the default
+                     # here, so that behaviour is unchanged); his
+                     # 2026-08 driver throttles to `if ep % 100 == 0`.
+                     # A knob rather than a hardcoded 100 so both of
+                     # his drivers can be reproduced from config.
 ):
     d = 2 ** n_qubits
 
@@ -465,7 +471,8 @@ def train(
             #
             n_seen += seq_pad.size(0)
 
-        print(f"epoch {ep:3d} | loss {total / max(n_seen,1):.6e}")
+        if print_every <= 1 or ep % print_every == 0 or ep == epochs:
+            print(f"epoch {ep:3d} | loss {total / max(n_seen,1):.6e}")
         if on_epoch is not None:
             on_epoch(ep, epochs, total / max(n_seen, 1))
 

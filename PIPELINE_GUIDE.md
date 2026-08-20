@@ -59,7 +59,7 @@ Hover any field in the control panel for the same help text.
 | `data_path` | data/NVDA_INTC | directory with raw `.dbn.zst` files; fallback when `symbol` has no `asset_paths` entry |
 | `file_pattern` | xnas-itch-{date}.mbp-10.dbn.zst | raw file name per day |
 | `dates` | [20250401, 20250402] | trading days (yyyymmdd) |
-| `instrument_filter` | false | **true = filter events to `symbol` before featurizing.** The raw files carry NVDA+INTC interleaved; false reproduces the legacy (mixed-stream) behavior and the frozen baseline. Set true for per-symbol runs (see `scripts/run_april.py`). |
+| `instrument_filter` | true | **true = filter events to `symbol` before featurizing.** The raw files carry NVDA+INTC interleaved; false reproduces the legacy (mixed-stream) behavior and the frozen baseline. Defaults true: his current `generate_timeseries` filters unconditionally. |
 | `session_start` / `session_end` | 09:30 / 15:30 | Eastern-time RTH window |
 
 ### featurize — event stream → resampled LOB feature bars
@@ -85,16 +85,16 @@ Hover any field in the control panel for the same help text.
 | field | default | meaning |
 |---|---|---|
 | `predicted` | log_mid | first variate (the thing being predicted) |
-| `predictors` | 8 features | second variate; one SEQ/CLS output pair each. A **nested list entry** is one multivariate predictor: predicted + the listed features jointly encoded (same `get_z_ts` math as ensemble v2 channels, alphabet n_symbols^(1+len)) into one `SEQ_DISTR_{sym}_multivariate_{predicted}-{first}-{last}_{month}` file — the input to the multivariate Kraus model. SEQ only: the colleague defines no multivariate CLS output. Verified by user-run `tests/verify_multivariate_seq.py`. |
+| `predictors` | his `features[1:]` | second variate; one SEQ/CLS output pair each. A **nested list entry** is one multivariate predictor: predicted + the listed features jointly encoded (same `get_z_ts` math as ensemble v2 channels, alphabet n_symbols^(1+len)) into one `SEQ_DISTR_{sym}_multivariate_{predicted}-{first}-{last}_{month}` file — the input to the multivariate Kraus model. SEQ only: the colleague defines no multivariate CLS output. Verified by user-run `tests/verify_multivariate_seq.py`. |
 | `max_seq_length` | 6 | max n-gram length |
 | `sequence_calculation` / `class_calculation` | true / true | which outputs to compute |
 | `class_name` | c1 | forward-move class: `c{k}` return-sign, `ca{k}` fwd-vs-bwd sum |
-| `class_names` | [] (legacy) | **v2 multi-class sweep** (colleague's new process_distributions, vendored as `cls_reference.py`): one CLS file per class, named `CLS_DISTR_{sym}__{predicted}-{predictor}_{month}_{cls}`, columns ordered by `class_values`. Empty = legacy single-class mode: old `[P(0),P(+1),P(−1)]` order and naming, matching the frozen baseline. Verified by user-run `tests/verify_cls_v2.py`. |
+| `class_names` | [ca4] | **v2 multi-class sweep** (colleague's new process_distributions, vendored as `cls_reference.py`): one CLS file per class, named `CLS_DISTR_{sym}_{predicted}-{predictor}_{month}_{cls}` (his earlier double underscore is retired), columns ordered by `class_values`. Empty = legacy single-class mode: old `[P(0),P(+1),P(−1)]` order and naming, matching the frozen baseline. Verified by user-run `tests/verify_cls_v2.py`. |
 | `class_values` | [-1,0,1] | class column order in v2 mode (`[P(−1),P(0),P(+1)]`); ignored in legacy mode |
 | `class_theta` | 0 (auto) | class threshold θ; 0 = built-in default per class |
 | `num_classes` | 3 | down / flat / up |
 | `sample_size` / `sample_after_length` / `random_state` | 1.0 / 30 / 42 | optional support subsampling for long n-grams |
-| `output_dir` | . | where SEQ_DISTR_*/CLS_DISTR_* land (repo root = legacy behavior) |
+| `output_dir` | . | where SQ_PRB_*/CLS_DISTR_* land (repo root = legacy behavior) |
 
 ### ensemble — fixed-length multi-channel training tables (ENS_TD_*)
 | field | default | meaning |
@@ -119,7 +119,7 @@ per month. Verification (run it yourself):
 `tests/verify_ensemble_v2.py` the v2 stage (default: 1 day, 20 files)
 against the colleague's own functions run his way.
 
-### training — SEQ_DISTR_* → trained model
+### training — SQ_PRB_* (bivariate) / SEQ_DISTR_* (multivariate) → trained model
 | field | default | meaning |
 |---|---|---|
 | `model` | kraus | trainer from the registry (future models plug in here) |
@@ -153,10 +153,63 @@ printed YAML is therefore the authority for how stage 3 runs, and the schedule i
 reproducible from the config alone.
 
 **Model file naming (bivariate):** `MOD_{sym}_bivariate_{predicted}-{predictor}_{month}_{q}q`
-and `WGHTS_MOD_..._{q}q.pt`. Runs made before the training consolidation used the
-April harness, which emitted `MODR_*` / `WGHTS_MODR_*` — a stray `R` from slicing
-only 8 of the 10 characters in `SEQ_DISTR_`, preserved at the time as an "original
-quirk". That is retired; filenames from current runs will not match those batches.
+and `WGHTS_{sym}_bivariate_..._{q}q.pt` — verbatim from the colleague's current
+(2026-02) `LearningKraus.py` driver, which builds both names from the run
+components and puts **no `MOD_` infix** in the `WGHTS_` name (matching his
+multivariate driver). Two older conventions are retired: pre-consolidation runs
+(the April harness) emitted `MODR_*` / `WGHTS_MODR_*` — a stray `R` from slicing
+only 8 of the 10 characters in `SEQ_DISTR_` — and the 2026-07-20 consolidation
+briefly emitted `WGHTS_MOD_*` (his older driver's form). Filenames from current
+runs match neither batch.
+
+**The SQ_PRB scheme (his 2026-08 `process_distributions`).** This branch cuts
+the distribution stage over to his newer scheme; `TrainingDistributions/
+process_distributions_v2.py` is his file vendored verbatim (two disclosed
+fixes: a guard on the module-level driver, and the missing local `plotting`
+import commented out) and serves as the byte-oracle. Sequence outputs are
+`SQ_PRB_{sym}_{predicted}-{predictor}_{month}` and class outputs
+`CLS_DISTR_{sym}_{predicted}-{predictor}_{month}_{cls}` (his earlier double
+underscore is gone). Fields this adds:
+
+| field | default | meaning |
+|---|---|---|
+| `distributions.output_mode` | monthly | which of his two branches to reproduce. `monthly` = his training branch: aggregate every date into one file per predictor, month-tagged, payloads `[distrs, samples]` / 4-field CLS rows. `daily` = his validation branch: one file per (predictor, day), full-date tagged, no aggregation, payloads `[sequences, seq_probs]` / `[[subsequence, class_probs], ...]`. The payload difference is his, not ours |
+| `distributions.class_tag_in_name` | true | put the class in CLS names as he does — note he orders the fields differently per branch: monthly `..._{month}_{cls}`, daily `..._{cls}_{date}`. False drops the tag, unambiguous only while one class is swept |
+| `distributions.save_seq_prob_weight` | false | also emit his per-day `SQ_PRB_WT_{sym}_{date}` = `[sequences, seq_probs, global_weights]`. Built from the `(predicted, predicted)` encoding and carrying no predictor tag — both his quirks, preserved |
+| `training.weights_scheme` | ensemble | encoder filename convention: `ensemble` = `WGHTS_{sym}_{variate}_{predicted}-{tag}_{month}_{q}q.pt` (what LearningEnsemble loads), `qmod` = `WGHTS_QMOD_{sym}_{predicted}-{tag}_{q}q_{month}.pt` (his newest trainer). His two files disagree; both stages here read this one field via `RunConfig.model_names()`, so they cannot drift |
+| `ensemble_model.exclude_last_channel` | true | ensemble only the first n−1 encoders, as his driver does (his last channel is the multivariate one he excludes). With an all-bivariate channel list this would silently drop a real feature — set false there |
+
+`scripts/run_sqprb.py` drives the whole chain for this scheme:
+
+```bash
+python scripts/run_sqprb.py --stages all --workers 0     # the four stages
+python scripts/run_sqprb.py --stages train               # any subset, resumable
+```
+
+Stages run stage-major, so each sees every symbol: the CPU stages
+(distributions, ensemble-tables) process securities concurrently
+(`--symbol-parallel`, since the day loop alone is capped at the trading-day
+count), and the GPU stages schedule every (symbol × predictor) job across
+every visible device through the same `plan_training`/`run_training_jobs`
+fan-out stage 3 of the April run uses.
+
+**`ensemble_model` (stage 4, LearningEnsemble.py).** Frozen pre-trained Kraus
+encoders + a trained QuantumDecoder predicting the class distribution
+(`pipeline/ensemble_model.py`; CLI `python -m pipeline ensemble-model`; the
+vendored math is `LearningEnsemble.py` at the repo root, `[vendoring fix 1]`
+= guarded module-level `sys.exit()`, `[vendoring fix 2]` = the driver's
+hardcoded `gpu_id=1`, superseded by `ensemble_model.device`). Inputs: the v2
+`ENS_TD_*` tables (`ensemble.output_dir`) and the four `WGHTS_*` encoders
+(`training.model_dir`). Field defaults are his driver verbatim: classes
+`[c2, ca4]` (one trained model per class — his single `clsName` re-run),
+`seq_lens [1,2,3,4]`, channels = 3 bivariate + the joint multivariate
+(only the first n−1 encoders enter the trained ensemble — his driver
+excludes the multivariate channel), 200 epochs, batch 6·512, lr 2e-4,
+`ce` loss, decoder-only (encoders frozen). Output:
+`{model_dir}/{cls}/ENS_MD_{sym}_{month}_` — his file name has no class tag,
+so the per-class directory is the disambiguator. `validate()` checks that
+every requested class/length has a corresponding ENS_TD source and that the
+three channel lists agree in length.
 
 ### 2b. The no-invisible-parameters invariant
 
