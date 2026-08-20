@@ -162,6 +162,37 @@ only 8 of the 10 characters in `SEQ_DISTR_` — and the 2026-07-20 consolidation
 briefly emitted `WGHTS_MOD_*` (his older driver's form). Filenames from current
 runs match neither batch.
 
+**The SQ_PRB scheme (his 2026-08 `process_distributions`).** This branch cuts
+the distribution stage over to his newer scheme; `TrainingDistributions/
+process_distributions_v2.py` is his file vendored verbatim (two disclosed
+fixes: a guard on the module-level driver, and the missing local `plotting`
+import commented out) and serves as the byte-oracle. Sequence outputs are
+`SQ_PRB_{sym}_{predicted}-{predictor}_{month}` and class outputs
+`CLS_DISTR_{sym}_{predicted}-{predictor}_{month}_{cls}` (his earlier double
+underscore is gone). Fields this adds:
+
+| field | default | meaning |
+|---|---|---|
+| `distributions.output_mode` | monthly | which of his two branches to reproduce. `monthly` = his training branch: aggregate every date into one file per predictor, month-tagged, payloads `[distrs, samples]` / 4-field CLS rows. `daily` = his validation branch: one file per (predictor, day), full-date tagged, no aggregation, payloads `[sequences, seq_probs]` / `[[subsequence, class_probs], ...]`. The payload difference is his, not ours |
+| `distributions.class_tag_in_name` | true | put the class in CLS names as he does — note he orders the fields differently per branch: monthly `..._{month}_{cls}`, daily `..._{cls}_{date}`. False drops the tag, unambiguous only while one class is swept |
+| `distributions.save_seq_prob_weight` | false | also emit his per-day `SQ_PRB_WT_{sym}_{date}` = `[sequences, seq_probs, global_weights]`. Built from the `(predicted, predicted)` encoding and carrying no predictor tag — both his quirks, preserved |
+| `training.weights_scheme` | ensemble | encoder filename convention: `ensemble` = `WGHTS_{sym}_{variate}_{predicted}-{tag}_{month}_{q}q.pt` (what LearningEnsemble loads), `qmod` = `WGHTS_QMOD_{sym}_{predicted}-{tag}_{q}q_{month}.pt` (his newest trainer). His two files disagree; both stages here read this one field via `RunConfig.model_names()`, so they cannot drift |
+| `ensemble_model.exclude_last_channel` | true | ensemble only the first n−1 encoders, as his driver does (his last channel is the multivariate one he excludes). With an all-bivariate channel list this would silently drop a real feature — set false there |
+
+`scripts/run_sqprb.py` drives the whole chain for this scheme:
+
+```bash
+python scripts/run_sqprb.py --stages all --workers 0     # the four stages
+python scripts/run_sqprb.py --stages train               # any subset, resumable
+```
+
+Stages run stage-major, so each sees every symbol: the CPU stages
+(distributions, ensemble-tables) process securities concurrently
+(`--symbol-parallel`, since the day loop alone is capped at the trading-day
+count), and the GPU stages schedule every (symbol × predictor) job across
+every visible device through the same `plan_training`/`run_training_jobs`
+fan-out stage 3 of the April run uses.
+
 **`ensemble_model` (stage 4, LearningEnsemble.py).** Frozen pre-trained Kraus
 encoders + a trained QuantumDecoder predicting the class distribution
 (`pipeline/ensemble_model.py`; CLI `python -m pipeline ensemble-model`; the
