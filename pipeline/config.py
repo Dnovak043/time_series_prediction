@@ -449,9 +449,12 @@ class RunConfig:
         fields differently in the two branches). The class tag is omitted
         when distributions.class_tag_in_name is False."""
         if cls_name is None:   # legacy single-class naming (frozen baseline)
+            # `date` must still win here: in daily mode every day would
+            # otherwise resolve to the same month-tagged name and silently
+            # overwrite the previous day's file.
             return ("CLS_DISTR_" + self.data.symbol + "_bivariate_"
                     + self.distributions.predicted + "-" + predictor
-                    + "_" + self.data.dates[0][:6])
+                    + "_" + (date or self.data.dates[0][:6]))
         # his 2026-08 driver (bivariate branch) -- the earlier double
         # underscore is gone:
         #   cls_dist_file + symbol +'_'+ predicted +'-'+ predictor

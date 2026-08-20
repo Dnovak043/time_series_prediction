@@ -53,7 +53,7 @@ matplotlib.use("Agg")
 import pipeline  # noqa: E402,F401  (sys.path bootstrap)
 from pipeline.config import RunConfig  # noqa: E402
 from pipeline.runner import run  # noqa: E402
-from run_april import detect_pattern, find_data_dir  # noqa: E402
+from run_april import find_data_dir  # noqa: E402
 
 # ---- the experiment, as requested -------------------------------------------
 SYMBOLS = ["NVDA", "AAPL", "INTC", "IBM"]
@@ -66,6 +66,22 @@ TRAIN_MONTH = "202504"
 VALIDATION_DATES = ["20250501", "20250502", "20250505"]
 CLASS_TAG_IN_NAME = True         # his driver's convention (see the CLS names above)
 OUTPUT_ROOT = "outputs/sqprb"
+
+
+def detect_pattern(data_dir, prefix: str) -> str:
+    """Which raw filename variant this machine has (.dbn.zst or plain .dbn),
+    probed with the dates THIS run needs.
+
+    run_april.detect_pattern probes a hardcoded 202504, so it raises on a
+    directory that holds only the month a given run wants -- e.g. a March
+    training scope.
+    """
+    for pattern in ("xnas-itch-{date}.mbp-10.dbn.zst",
+                    "xnas-itch-{date}.mbp-10.dbn"):
+        head, tail = pattern.split("{date}")
+        if any(data_dir.glob(head + prefix + "*" + tail)):
+            return pattern
+    raise SystemExit(f"no {prefix}* .dbn/.dbn.zst files in {data_dir}")
 
 
 def days_on_disk(data_dir: Path, pattern: str, prefix: str) -> list[str]:
@@ -96,9 +112,9 @@ def make_config(symbol: str, data_dir: Path, pattern: str, dates: list[str],
     cfg.distributions.output_dir = f"{OUTPUT_ROOT}/{symbol}"
 
     # the distribution stage never reads training.predictor, but
-    # validate() requires it to name one of the configured PREDICTORS
+    # validate() requires it to name one of the configured predictors
     cfg.training.predictor = list(PREDICTORS)[0]
-    cfg.training.PREDICTORS = list(PREDICTORS)
+    cfg.training.predictors = list(PREDICTORS)
 
     cfg.featurize.workers = workers
     cfg.featurize.cache_dir = f"{OUTPUT_ROOT}/{symbol}/feature_cache"
@@ -124,7 +140,9 @@ def run_stage(symbol: str, mode: str, dates: list[str], workers: int) -> None:
     data_dir = find_data_dir(symbol)
     if not data_dir.is_dir():
         sys.exit(f"data directory not found for {symbol}: {data_dir}")
-    pattern = detect_pattern(data_dir)
+    # probe with the month/date range this stage actually needs
+    pattern = detect_pattern(
+        data_dir, TRAIN_MONTH if mode == "monthly" else dates[0][:6])
 
     if mode == "monthly":
         dates = days_on_disk(data_dir, pattern, TRAIN_MONTH)

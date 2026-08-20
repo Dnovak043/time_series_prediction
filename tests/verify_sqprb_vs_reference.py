@@ -175,6 +175,22 @@ def expected(cfg, mode, dates, predictors):
     return names
 
 
+def detect_pattern(data_dir, prefix: str) -> str:
+    """Which raw filename variant this machine has (.dbn.zst or plain .dbn),
+    probed with the dates THIS run needs.
+
+    run_april.detect_pattern probes a hardcoded 202504, so it raises on a
+    directory that holds only the month a given run wants -- e.g. a March
+    training scope.
+    """
+    for pattern in ("xnas-itch-{date}.mbp-10.dbn.zst",
+                    "xnas-itch-{date}.mbp-10.dbn"):
+        head, tail = pattern.split("{date}")
+        if any(data_dir.glob(head + prefix + "*" + tail)):
+            return pattern
+    raise SystemExit(f"no {prefix}* .dbn/.dbn.zst files in {data_dir}")
+
+
 def days_on_disk(data_dir: Path, pattern: str, prefix: str) -> list[str]:
     head, tail = pattern.split("{date}")
     return sorted(p.name[len(head):-len(tail)]
@@ -183,12 +199,15 @@ def days_on_disk(data_dir: Path, pattern: str, prefix: str) -> list[str]:
 
 
 def stage(args, mode: str) -> list[tuple[str, bool, str]]:
-    from run_april import detect_pattern, find_data_dir
+    from run_april import find_data_dir
 
     data_dir = Path(args.data_dir) if args.data_dir else find_data_dir(args.symbol)
     if not data_dir.is_dir():
         sys.exit(f"raw data directory not found: {data_dir}")
-    pattern = detect_pattern(data_dir)
+    # probe with the month/date range this stage actually needs
+    pattern = detect_pattern(
+        data_dir,
+        args.train_month if mode == "monthly" else args.validation_dates[0][:6])
 
     if mode == "monthly":
         dates = days_on_disk(data_dir, pattern, args.train_month)
