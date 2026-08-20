@@ -206,8 +206,16 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     model_dir = root / t.model_dir
     model_dir.mkdir(parents=True, exist_ok=True)
     if isinstance(t.predictor, str):
-        # original bivariate naming: MOD_<base>, WGHTS_MOD_<base>.pt
-        base = seq_path.name.replace("SEQ_DISTR_", "")
+        # original bivariate naming: MOD_<base>, WGHTS_MOD_<base>.pt.
+        # Derived from the CONFIG, not by stripping a prefix off the input
+        # filename: the sequence files are now SQ_PRB_* (his 2026-08
+        # scheme), so the old `.replace("SEQ_DISTR_", "")` silently became
+        # a no-op and produced MOD_SQ_PRB_<...> -- nobody's convention.
+        # This matches the multivariate branch below and keeps model names
+        # unchanged from before the SQ_PRB rename.
+        base = (cfg.data.symbol + "_bivariate_"
+                + cfg.distributions.predicted + "-" + t.predictor
+                + "_" + cfg.data.dates[0][:6])
         mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
         wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
         chart_tag = t.predictor
