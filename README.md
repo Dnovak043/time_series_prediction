@@ -35,13 +35,13 @@ one 16-letter symbol stream per (predicted, predictor) pair per day
       │  (down/flat/up) observed at the end of each occurrence
       ▼
 empirical distributions, aggregated over a month
-  ├── SEQ_DISTR_*  P(pattern)                      → trains Kraus models
+  ├── SQ_PRB_*     P(pattern)                      → trains Kraus models
   ├── CLS_DISTR_*  P(class | pattern)              → analysis / class prediction
   └── ENS_TD_*     joint + per-channel tables      → trains ensembles
       ▼
 models
   ├── KrausInstrument (LearningKraus.py): 16 complex d×d operators, d=2^3;
-  │   P(s₁…s_T) = Tr(K_{s_T}···K_{s_1} ρ₀ K†…) fitted to SEQ_DISTR by NLL
+  │   P(s₁…s_T) = Tr(K_{s_T}···K_{s_1} ρ₀ K†…) fitted to SQ_PRB by NLL
   │   — or, multivariate: 256 operators, d=2^6, fitted to the joint-channel
   │   SEQ_DISTR (LearningKraus_multivariate driver; identical library code)
   └── ensemble of channel models (colleague's line of work; ENS_TD_* is
@@ -117,7 +117,7 @@ channel pairs it with several at once); it appears in every filename.
 
 ## 4. Artifact formats (pickle schemas)
 
-**`SEQ_DISTR_{sym}_bivariate_{predicted}-{predictor}_{yyyymm}`**
+**`SQ_PRB_{sym}_{predicted}-{predictor}_{yyyymm}`** (training; per-day validation files are `..._{yyyymmdd}`)
 `[distrs, samples]` where `distrs = [[sequence, probability], …]`
 (sequence = list of ints 0–15, lengths 1–6, observed patterns only) and
 `samples = [sequence, …]` in the same order. Training input for Kraus models.

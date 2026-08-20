@@ -59,7 +59,7 @@ Hover any field in the control panel for the same help text.
 | `data_path` | data/NVDA_INTC | directory with raw `.dbn.zst` files; fallback when `symbol` has no `asset_paths` entry |
 | `file_pattern` | xnas-itch-{date}.mbp-10.dbn.zst | raw file name per day |
 | `dates` | [20250401, 20250402] | trading days (yyyymmdd) |
-| `instrument_filter` | false | **true = filter events to `symbol` before featurizing.** The raw files carry NVDA+INTC interleaved; false reproduces the legacy (mixed-stream) behavior and the frozen baseline. Set true for per-symbol runs (see `scripts/run_april.py`). |
+| `instrument_filter` | true | **true = filter events to `symbol` before featurizing.** The raw files carry NVDA+INTC interleaved; false reproduces the legacy (mixed-stream) behavior and the frozen baseline. Defaults true: his current `generate_timeseries` filters unconditionally. |
 | `session_start` / `session_end` | 09:30 / 15:30 | Eastern-time RTH window |
 
 ### featurize — event stream → resampled LOB feature bars
@@ -85,16 +85,16 @@ Hover any field in the control panel for the same help text.
 | field | default | meaning |
 |---|---|---|
 | `predicted` | log_mid | first variate (the thing being predicted) |
-| `predictors` | 8 features | second variate; one SEQ/CLS output pair each. A **nested list entry** is one multivariate predictor: predicted + the listed features jointly encoded (same `get_z_ts` math as ensemble v2 channels, alphabet n_symbols^(1+len)) into one `SEQ_DISTR_{sym}_multivariate_{predicted}-{first}-{last}_{month}` file — the input to the multivariate Kraus model. SEQ only: the colleague defines no multivariate CLS output. Verified by user-run `tests/verify_multivariate_seq.py`. |
+| `predictors` | his `features[1:]` | second variate; one SEQ/CLS output pair each. A **nested list entry** is one multivariate predictor: predicted + the listed features jointly encoded (same `get_z_ts` math as ensemble v2 channels, alphabet n_symbols^(1+len)) into one `SEQ_DISTR_{sym}_multivariate_{predicted}-{first}-{last}_{month}` file — the input to the multivariate Kraus model. SEQ only: the colleague defines no multivariate CLS output. Verified by user-run `tests/verify_multivariate_seq.py`. |
 | `max_seq_length` | 6 | max n-gram length |
 | `sequence_calculation` / `class_calculation` | true / true | which outputs to compute |
 | `class_name` | c1 | forward-move class: `c{k}` return-sign, `ca{k}` fwd-vs-bwd sum |
-| `class_names` | [] (legacy) | **v2 multi-class sweep** (colleague's new process_distributions, vendored as `cls_reference.py`): one CLS file per class, named `CLS_DISTR_{sym}__{predicted}-{predictor}_{month}_{cls}`, columns ordered by `class_values`. Empty = legacy single-class mode: old `[P(0),P(+1),P(−1)]` order and naming, matching the frozen baseline. Verified by user-run `tests/verify_cls_v2.py`. |
+| `class_names` | [ca4] | **v2 multi-class sweep** (colleague's new process_distributions, vendored as `cls_reference.py`): one CLS file per class, named `CLS_DISTR_{sym}_{predicted}-{predictor}_{month}_{cls}` (his earlier double underscore is retired), columns ordered by `class_values`. Empty = legacy single-class mode: old `[P(0),P(+1),P(−1)]` order and naming, matching the frozen baseline. Verified by user-run `tests/verify_cls_v2.py`. |
 | `class_values` | [-1,0,1] | class column order in v2 mode (`[P(−1),P(0),P(+1)]`); ignored in legacy mode |
 | `class_theta` | 0 (auto) | class threshold θ; 0 = built-in default per class |
 | `num_classes` | 3 | down / flat / up |
 | `sample_size` / `sample_after_length` / `random_state` | 1.0 / 30 / 42 | optional support subsampling for long n-grams |
-| `output_dir` | . | where SEQ_DISTR_*/CLS_DISTR_* land (repo root = legacy behavior) |
+| `output_dir` | . | where SQ_PRB_*/CLS_DISTR_* land (repo root = legacy behavior) |
 
 ### ensemble — fixed-length multi-channel training tables (ENS_TD_*)
 | field | default | meaning |
@@ -119,7 +119,7 @@ per month. Verification (run it yourself):
 `tests/verify_ensemble_v2.py` the v2 stage (default: 1 day, 20 files)
 against the colleague's own functions run his way.
 
-### training — SEQ_DISTR_* → trained model
+### training — SQ_PRB_* (bivariate) / SEQ_DISTR_* (multivariate) → trained model
 | field | default | meaning |
 |---|---|---|
 | `model` | kraus | trainer from the registry (future models plug in here) |

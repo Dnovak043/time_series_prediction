@@ -165,9 +165,21 @@ symbol sequences → empirical subsequence/class distributions → Kraus-operato
 
 ## Current state (2026-07-27)
 
-- **PRs #1–#10 all merged into `dev`; no open PRs, no feature branches.**
-  Branch picture: `main` (locked, frozen baseline) + `dev` (everything).
+- **PRs #1–#10 merged into `dev`. TWO OPEN PRs:**
+  - **#11** `worktree-vanio-new-experiments` — his 2026-02 drivers: 12 Kraus
+    models per run + the LearningEnsemble stage-4 decoders.
+  - **#12** `worktree-process-distributions-v2` — his 2026-08
+    `process_distributions`: the SQ_PRB_ scheme, daily/validation branch,
+    and the end-to-end `scripts/run_sqprb.py`. **Stacked on #11** (it
+    merges that branch in), so merge #11 first.
+  Branch picture: `main` (locked, frozen baseline) + `dev` + those two.
   Every equivalence suite was user-run and PASSED before its merge.
+- **The SQ_PRB scheme (#12) changes distribution output names**: sequences
+  are `SQ_PRB_{sym}_{predicted}-{predictor}_{month}` (was
+  `SEQ_DISTR_{sym}_bivariate_...`) and CLS drops the double underscore.
+  The multivariate SEQ name is unchanged. `distributions.output_mode`
+  selects his monthly (training) or daily (validation) branch — they
+  differ in payload, not only naming. See PIPELINE_GUIDE §2.
 - The April experiment covers **NVDA, INTC, and IBM** and reproduces the
   colleague's two current drivers (his 2026-02 `LearningKraus.py` +
   `LearningKraus_multivariate.py`, run by him for AAPL): run

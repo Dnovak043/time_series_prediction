@@ -175,31 +175,12 @@ def expected(cfg, mode, dates, predictors):
     return names
 
 
-def detect_pattern(data_dir, prefix: str) -> str:
-    """Which raw filename variant this machine has (.dbn.zst or plain .dbn),
-    probed with the dates THIS run needs.
-
-    run_april.detect_pattern probes a hardcoded 202504, so it raises on a
-    directory that holds only the month a given run wants -- e.g. a March
-    training scope.
-    """
-    for pattern in ("xnas-itch-{date}.mbp-10.dbn.zst",
-                    "xnas-itch-{date}.mbp-10.dbn"):
-        head, tail = pattern.split("{date}")
-        if any(data_dir.glob(head + prefix + "*" + tail)):
-            return pattern
-    raise SystemExit(f"no {prefix}* .dbn/.dbn.zst files in {data_dir}")
-
-
-def days_on_disk(data_dir: Path, pattern: str, prefix: str) -> list[str]:
-    head, tail = pattern.split("{date}")
-    return sorted(p.name[len(head):-len(tail)]
-                  for p in data_dir.glob(head + prefix + "*" + tail)
-                  if p.name.endswith(tail))
-
-
 def stage(args, mode: str) -> list[tuple[str, bool, str]]:
     from run_april import find_data_dir
+    # detect_pattern/days_on_disk come from the run script rather than being
+    # copied: two copies of the raw-file probing logic is how the hardcoded
+    # 202504 month survived in run_april's version.
+    from run_sqprb import days_on_disk, detect_pattern
 
     data_dir = Path(args.data_dir) if args.data_dir else find_data_dir(args.symbol)
     if not data_dir.is_dir():
