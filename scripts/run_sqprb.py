@@ -256,7 +256,7 @@ def run_ensemble_tables(symbol: str, workers: int) -> None:
     print(f"  -> {len(out)} files in {cfg.ensemble.output_dir}")
 
 
-def fan_out(stage: str, cfg_paths: dict) -> None:
+def fan_out(stage: str, cfg_paths: dict, dry_run: bool = False) -> None:
     """Stages 3 and 4 across every symbol AND every GPU at once, using the
     repo's existing scheduler (one job per device, workers exit after each
     job so the GPU is released immediately)."""
@@ -295,6 +295,28 @@ def fan_out(stage: str, cfg_paths: dict) -> None:
               f"torch sees only these GPUs, renumbered from cuda:0")
     for j in jobs:
         print(f"    {j['symbol']:6s} x {j['label']:16s} -> {j['device']}")
+
+    # how many jobs land on each device, and how many devices go unused --
+    # with fewer jobs than GPUs the round-robin simply cannot reach them all
+    per_device = {}
+    for j in jobs:
+        per_device[j["device"]] = per_device.get(j["device"], 0) + 1
+    print(f"    jobs per device: "
+          + ", ".join(f"{d}={n}" for d, n in sorted(per_device.items())))
+    try:
+        import torch
+        total = torch.cuda.device_count()
+        if total > len(per_device):
+            print(f"    NOTE: {total} GPU(s) present but only "
+                  f"{len(per_device)} receive work — there are only "
+                  f"{len(jobs)} job(s). More symbols or predictors would "
+                  f"fill the rest.")
+    except Exception:                                       # noqa: BLE001
+        pass
+
+    if dry_run:
+        print("    (--dry-run: plan only, nothing trained)")
+        return
 
     for i, r in enumerate(run_training_jobs(jobs, n_par, worker=worker), 1):
         tag = r.get("predictor") or r.get("class_name")
@@ -358,6 +380,9 @@ def main(argv=None) -> None:
     ap.add_argument("--workers", type=int, default=1,
                     help="day-parallel featurize workers WITHIN one symbol "
                          "(0 = one per core, capped at the day count)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="for the GPU stages, print the schedule (jobs, "
+                         "devices, concurrency) and exit without training")
     ap.add_argument("--symbol-parallel", type=int, default=0,
                     help="how many symbols to process at once in the CPU "
                          "stages. 0 = all of them (the day loop alone cannot "
@@ -388,7 +413,8 @@ def main(argv=None) -> None:
                     run_ensemble_tables(symbol, args.workers)
         else:
             # GPU stages: every symbol x predictor/class scheduled together
-            fan_out(stage, write_configs(args.symbols, args.workers))
+            fan_out(stage, write_configs(args.symbols, args.workers),
+                    dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
