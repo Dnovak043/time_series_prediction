@@ -43,7 +43,13 @@ def visible_gpus(spec: str = "auto") -> list[str]:
     try:
         import torch
         return [str(i) for i in range(torch.cuda.device_count())]
-    except Exception:  # torch missing/broken -> CPU scheduling
+    except Exception as e:  # torch missing/broken -> CPU scheduling
+        # Degrade to CPU rather than breaking callers (the control panel
+        # asks this too), but never silently: a swallowed import error here
+        # surfaces only as a mysteriously serial GPU stage.
+        import sys as _sys
+        print(f"[visible_gpus] torch unavailable ({type(e).__name__}: {e}); "
+              f"scheduling on CPU", file=_sys.stderr)
         return []
 
 
