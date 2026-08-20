@@ -288,6 +288,84 @@ class EnsembleConfig:
 
 
 @dataclass
+class EnsembleModelConfig:
+    """LearningEnsemble.py stage: multi-encoder quantum ensemble. Frozen
+    pre-trained Kraus encoders (the WGHTS_* files in training.model_dir) +
+    a QuantumDecoder trained on the ENS_TD_* tables (ensemble.output_dir)
+    to predict the class distribution. Field defaults are the colleague's
+    driver values verbatim."""
+    class_names: list = _f(lambda: ["c2", "ca4"],
+                           "One trained ensemble per class definition (his "
+                           "driver holds a single clsName and is re-run per "
+                           "class). Each model is written under "
+                           "{model_dir}/{cls}/ with his ENS_MD_* name "
+                           "unchanged — the name itself carries no class "
+                           "tag, so the per-class directory is what keeps "
+                           "the models apart.")
+    seq_lens: list = _f(lambda: [1, 2, 3, 4],
+                        "ENS_TD sequence lengths loaded for training — his "
+                        "driver's effective list (the ensemble stage also "
+                        "writes SL_5; it is simply not read).")
+    channels: list = _f(lambda: ["ofi_L10_norm_n", "micro_price", "vpin",
+                                 ["ofi_L10_norm_n", "micro_price", "vpin"]],
+                        "Encoder channels — his `predictors`: 3 bivariate + "
+                        "the joint multivariate. Must match the channel "
+                        "order of the ENS_TD tables (ensemble.predictors). "
+                        "NOTE, verbatim from his driver: every channel's "
+                        "encoder is loaded, but the trained ensemble uses "
+                        "only the first n-1 encoders — the multivariate "
+                        "channel is deliberately excluded.")
+    channel_names: list = _f(lambda: ["ofi_L10_norm_n", "micro_price",
+                                      "vpin", "L10_micro_vpin"],
+                             "File-name tag per channel — his "
+                             "`predictors_names`; locates each channel's "
+                             "WGHTS_*.pt in training.model_dir.")
+    channel_qubits: list = _f(lambda: [3, 3, 3, 6],
+                              "Encoder register size per channel — his "
+                              "`qubits`; d = 2^q per encoder.")
+    epochs: int = _f(200, "Decoder training epochs (his driver).")
+    batch_size: int = _f(3072, "Batch size — his 6*512.")
+    lr: float = _f(2e-4, "Learning rate (his comment: 5e-3 was too high).")
+    prediction_loss: str = _f("ce", "Decoder training objective.",
+                              choices=["ce", "kl", "js", "mse"])
+    d_out: int = _f(3, "Decoder output dimension = number of classes.",
+                    advanced=True)
+    use_unitary: bool = _f(True, "Learn a unitary before the co-isometry in "
+                                 "the decoder.", advanced=True)
+    normalization_point: str = _f("input", "Where the decoder normalizes "
+                                          "the density matrix.",
+                                  choices=["input", "after_unitary",
+                                           "output"], advanced=True)
+    lambda_enc: float = _f(0.0, "Weight of the encoder loss (his run: 0 = "
+                                "decoder-only objective).", advanced=True)
+    lambda_pred: float = _f(1.0, "Weight of the prediction loss.",
+                            advanced=True)
+    freeze_encoders: bool = _f(True, "Keep the pre-trained encoders fixed "
+                                     "(his run).", advanced=True)
+    freeze_decoder: bool = _f(False, "Freeze the decoder instead (unusual).",
+                              advanced=True)
+    length_weighting: str = _f("equal", "How sequence lengths are weighted "
+                                        "when flattening the per-length "
+                                        "ENS_TD tables.",
+                               choices=["equal", "counts"], advanced=True)
+    evaluate: bool = _f(True, "Run his agreement evaluation after training; "
+                              "the headline metrics land in the result.")
+    eval_batch_size: int = _f(32, "Evaluation batch size — his value; kept "
+                                  "small because the product-state rho is "
+                                  "dense.", advanced=True)
+    device: str = _f("auto", "Compute device. Replaces the driver's "
+                             "hardcoded gpu_id=1 ([vendoring fix 2]): auto "
+                             "= cuda if available else cpu; 'cuda:N' pins "
+                             "one training to one GPU (how the fan-out "
+                             "schedules).",
+                     choices=["auto", "cuda", "cpu", "mps"], free_form=True,
+                     options_provider="devices", validator="device")
+    model_dir: str = _f("outputs/ensemble_models",
+                        "Base directory for the trained ensembles; each "
+                        "class writes to {model_dir}/{cls}/ENS_MD_*.")
+
+
+@dataclass
 class TrainingConfig:
     """SEQ_DISTR_* pickle -> trained sequence model."""
     model: str = _f("kraus", "Model family; registered trainers appear in "
@@ -366,6 +444,19 @@ class TrainingConfig:
     continue_from: str = _f("", "Path to WGHTS_*.pt weights to resume from; "
                                 "empty = fresh start.", advanced=True)
     model_dir: str = _f(".", "Where MOD_*/WGHTS_* model files are written.")
+    weights_scheme: str = _f("ensemble",
+                             "Filename convention for the trained encoder. "
+                             "'ensemble' (default) = "
+                             "WGHTS_{sym}_{variate}_{predicted}-{tag}_{month}"
+                             "_{q}q.pt, the form LearningEnsemble.py loads, "
+                             "so training feeds the ensemble stage directly. "
+                             "'qmod' = WGHTS_QMOD_{sym}_{predicted}-{tag}_"
+                             "{q}q_{month}.pt, his 2026-08 LearningKraus "
+                             "driver. His own two files disagree on this: "
+                             "his trainer writes qmod, his ensemble reads "
+                             "the other. Both stages here read THIS field, "
+                             "so whichever you pick they stay consistent.",
+                             choices=["ensemble", "qmod"])
     predictors: list = _f(lambda: [],
                           "Predictors for `train-all` (one model per predictor); "
                           "empty = train all of distributions.predictors.",
@@ -393,6 +484,7 @@ STAGES = {
     "distributions": DistributionConfig,
     "ensemble": EnsembleConfig,
     "training": TrainingConfig,
+    "ensemble_model": EnsembleModelConfig,
 }
 
 
@@ -404,6 +496,8 @@ class RunConfig:
     distributions: DistributionConfig = field(default_factory=DistributionConfig)
     ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    ensemble_model: EnsembleModelConfig = field(
+        default_factory=EnsembleModelConfig)
 
     # -- derived values -----------------------------------------------------
     @property
@@ -436,6 +530,25 @@ class RunConfig:
         return ("SQ_PRB_" + self.data.symbol + "_"
                 + self.distributions.predicted + "-" + predictor
                 + "_" + (date or self.data.dates[0][:6]))
+
+    def model_names(self, tag: str, n_qubits: int,
+                    multivariate: bool = False) -> tuple[str, str]:
+        """(model pickle name, weights name) for one trained encoder.
+
+        Single source of truth: pipeline.models WRITES these and
+        pipeline.ensemble_model READS the weights one, so the trainer and
+        the ensemble stage cannot drift apart. Selected by
+        training.weights_scheme -- see that field for why the choice
+        exists.
+        """
+        variate = "multivariate" if multivariate else "bivariate"
+        month = self.data.dates[0][:6]
+        sym, pred = self.data.symbol, self.distributions.predicted
+        if self.training.weights_scheme == "qmod":
+            stem = f"QMOD_{sym}_{pred}-{tag}_{n_qubits}q_{month}"
+            return stem, f"WGHTS_{stem}.pt"
+        stem = f"{sym}_{variate}_{pred}-{tag}_{month}_{n_qubits}q"
+        return f"MOD_{stem}", f"WGHTS_{stem}.pt"
 
     def seq_prob_weight_name(self, date: str) -> str:
         """His SQ_PRB_WT_ name: one file per (symbol, day) -- no predictor
@@ -572,6 +685,25 @@ class RunConfig:
                 problems.append(f"ensemble channel {list(ch)!r}: duplicate "
                                 f"variables in joint encoding {variables} "
                                 "(get_z_ts would raise)")
+        em = self.ensemble_model
+        if not (len(em.channels) == len(em.channel_names)
+                == len(em.channel_qubits)):
+            problems.append(
+                "ensemble_model.channels / channel_names / channel_qubits "
+                f"must be the same length, got {len(em.channels)} / "
+                f"{len(em.channel_names)} / {len(em.channel_qubits)}")
+        for cls in em.class_names:
+            if cls not in self.ensemble.class_names:
+                problems.append(
+                    f"ensemble_model.class_names entry {cls!r} is not in "
+                    "ensemble.class_names — no ENS_TD_* tables would exist "
+                    "for it")
+        for k in em.seq_lens:
+            if k not in self.ensemble.seq_lengths:
+                problems.append(
+                    f"ensemble_model.seq_lens entry {k!r} is not in "
+                    "ensemble.seq_lengths — no ENS_TD_* tables would exist "
+                    "for it")
         return problems
 
 

@@ -156,12 +156,14 @@ encoding (symbols 0–15) or, in v2, optionally a joint encoding of predicted
 0–4^(1+len)−1) — channel alphabets may differ within one file.
 
 **Models**: `MOD…_{n}q` = pickle `[model, sequences, emp_probs]` (full
-nn.Module + training set); `WGHTS_MOD…_{n}q.pt` = `torch.save` of
+nn.Module + training set); `WGHTS…_{n}q.pt` = `torch.save` of
 `{"model_state", "meta"}` (meta: m, n_qubits, d, learn_rho0, symbol,
-predictor, epochs, seed). Multivariate models follow the colleague's
-driver naming instead:
+predictor, epochs, seed). Naming follows the colleague's current drivers
+verbatim — the `WGHTS_` name carries **no `MOD_` infix** in either mode:
+bivariate `MOD_{sym}_bivariate_{predicted}-{predictor}_{yyyymm}_{n}q` /
+`WGHTS_{sym}_bivariate_…_{n}q.pt`; multivariate
 `MOD_{sym}_multivariate_{predicted}-{tag}_{yyyymm}_{n}q` /
-`WGHTS_{sym}_multivariate_…_{n}q.pt` (no `MOD_` infix — his convention),
+`WGHTS_{sym}_multivariate_…_{n}q.pt`,
 where `tag` is `training.predictor_abbrev` (his `L10_micro_vpin`) or
 `{first}-{last}`. Per trained model you also get 4 PNG charts
 (`{sym}_{yyyymm}_{predicted}-{predictor}_{n}q_1..4.png`) — target-vs-model
@@ -266,10 +268,11 @@ for 2 days × 8 predictors, identical bytes; colleague's ensemble scope
   `[vendoring fix N]`-marked corrections; pipeline stages import its math
   functions rather than reimplementing them.
 - Naming quirks are preserved deliberately where outputs must match the
-  original programs (the v2 CLS double underscore; the multivariate
-  `WGHTS_` without a `MOD_` infix). **One was retired:** the bivariate
-  model name is now `MOD_…`, not the old `MOD` + `title[8:]` → `MODR_…`
-  off-by-one, so filenames from current runs differ from any batch made
-  before 2026-07-20.
+  original programs (the v2 CLS double underscore; `WGHTS_` without a
+  `MOD_` infix, per the colleague's current drivers). **Two were retired:**
+  the old `MOD` + `title[8:]` → `MODR_…` off-by-one (pre-2026-07-20
+  batches), and the `WGHTS_MOD_*` bivariate form of his older driver
+  (the 2026-07-20 consolidation) — filenames from current runs differ
+  from both.
 - The original scripts ran their whole pipeline at import; they are now
   `__main__`-guarded but otherwise behave identically when run directly.

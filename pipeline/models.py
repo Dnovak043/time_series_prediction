@@ -206,18 +206,24 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
     model_dir = root / t.model_dir
     model_dir.mkdir(parents=True, exist_ok=True)
     if isinstance(t.predictor, str):
-        # original bivariate naming: MOD_<base>, WGHTS_MOD_<base>.pt.
-        # Derived from the CONFIG, not by stripping a prefix off the input
-        # filename: the sequence files are now SQ_PRB_* (his 2026-08
-        # scheme), so the old `.replace("SEQ_DISTR_", "")` silently became
-        # a no-op and produced MOD_SQ_PRB_<...> -- nobody's convention.
-        # This matches the multivariate branch below and keeps model names
-        # unchanged from before the SQ_PRB rename.
+        # bivariate naming, verbatim from the colleague's current driver
+        # (2026-02 LearningKraus.py): names are built from the run
+        # components, and WGHTS_ carries NO MOD_ infix — matching the
+        # multivariate branch below and, importantly, matching what
+        # LearningEnsemble.py loads as its frozen encoders. His earlier
+        # driver's "WGHTS_"+('MOD'+title[8:]) form (our WGHTS_MOD_*) is
+        # retired with it.
+        #
+        # Built from the CONFIG rather than by stripping a prefix off the
+        # input filename: the sequence files are SQ_PRB_* under his 2026-08
+        # scheme, so the old `.replace("SEQ_DISTR_", "")` would silently
+        # become a no-op and yield MOD_SQ_PRB_<...> — nobody's convention.
         base = (cfg.data.symbol + "_bivariate_"
                 + cfg.distributions.predicted + "-" + t.predictor
                 + "_" + cfg.data.dates[0][:6])
-        mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
-        wghts_path = model_dir / f"WGHTS_MOD_{base}_{t.n_qubits}q.pt"
+        mod_name, wghts_name = cfg.model_names(t.predictor, t.n_qubits)
+        mod_path = model_dir / mod_name
+        wghts_path = model_dir / wghts_name
         chart_tag = t.predictor
     else:
         # LearningKraus_multivariate driver naming, verbatim — including its
@@ -228,8 +234,10 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         base = (cfg.data.symbol + "_multivariate_"
                 + cfg.distributions.predicted + "-" + pred_tag
                 + "_" + cfg.data.dates[0][:6])
-        mod_path = model_dir / f"MOD_{base}_{t.n_qubits}q"
-        wghts_path = model_dir / f"WGHTS_{base}_{t.n_qubits}q.pt"
+        mod_name, wghts_name = cfg.model_names(pred_tag, t.n_qubits,
+                                               multivariate=True)
+        mod_path = model_dir / mod_name
+        wghts_path = model_dir / wghts_name
         # charts carry the SAME predictor tag as the model files, so a
         # delivered bundle (2 result files + 4 PNGs) is internally
         # consistent; predictor_key's '+'-joined form would not match
