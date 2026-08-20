@@ -150,6 +150,11 @@ def make_config(symbol, data_dir, pattern, dates, mode, workers, predictors):
     cfg.distributions.output_mode = mode
     cfg.distributions.output_dir = f"{OUT_ROOT}/{symbol}"
 
+    # the distribution stage never reads training.predictor, but
+    # validate() requires it to name one of the configured predictors
+    cfg.training.predictor = list(predictors)[0]
+    cfg.training.predictors = list(predictors)
+
     cfg.featurize.workers = workers
     cfg.featurize.cache_dir = f"{OUT_ROOT}/{symbol}/feature_cache"
     return cfg

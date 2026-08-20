@@ -95,6 +95,11 @@ def make_config(symbol: str, data_dir: Path, pattern: str, dates: list[str],
     cfg.distributions.class_calculation = True
     cfg.distributions.output_dir = f"{OUTPUT_ROOT}/{symbol}"
 
+    # the distribution stage never reads training.predictor, but
+    # validate() requires it to name one of the configured PREDICTORS
+    cfg.training.predictor = list(PREDICTORS)[0]
+    cfg.training.PREDICTORS = list(PREDICTORS)
+
     cfg.featurize.workers = workers
     cfg.featurize.cache_dir = f"{OUTPUT_ROOT}/{symbol}/feature_cache"
     return cfg
