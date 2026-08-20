@@ -483,6 +483,11 @@ class TrainingConfig:
                               "per GPU, else 1 (CPU). Each 3-qubit model uses "
                               "only a few percent of an A100, so values above "
                               "the GPU count are reasonable.")
+    print_every: int = _f(1,
+                          "Epoch print cadence during training. 1 = every "
+                          "epoch, his 2026-02 driver. 100 = his 2026-08 "
+                          "driver's `if ep % 100 == 0`. Console output only "
+                          "— never results.", advanced=True)
     seed: int = _f(-1, "Torch seed for training. -1 = unseeded, the original "
                        "main() behavior (results vary run to run).")
 

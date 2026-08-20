@@ -70,6 +70,14 @@ CLASS_TAG_IN_NAME = True         # his driver's convention (see the CLS names ab
 N_QUBITS = 3                     # bivariate alphabet 4^2 = 16 -> d = 8
 EPOCHS = 5000                    # his (1).py driver: epochs=5000 (the schema
                                  # default is 3000, from his OLDER driver)
+PRINT_EVERY = 100                # his (1).py: `if ep % 100 == 0`
+NUM_WORKERS = 8                  # his (1).py passes num_workers=8. NOTE: his
+                                 # own DataLoader hardcodes 0, so his run used
+                                 # 0 workers -- the parameter is dead in his
+                                 # code and live in ours ([vendoring fix 1]).
+                                 # Matching his STATED value; results are
+                                 # identical either way (batch composition is
+                                 # set by the parent sampler).
 MIN_SEQ_PROB = 0.0001            # his (1).py bivariate branch; the schema
                                  # default is 0.0, which trains on every
                                  # observed sequence instead of dropping the
@@ -142,6 +150,8 @@ def make_config(symbol: str, data_dir: Path, pattern: str, dates: list[str],
     cfg.training.n_qubits = N_QUBITS
     cfg.training.epochs = EPOCHS
     cfg.training.min_seq_prob = MIN_SEQ_PROB
+    cfg.training.print_every = PRINT_EVERY
+    cfg.training.num_workers = NUM_WORKERS
     cfg.training.model_dir = f"{OUTPUT_ROOT}/{symbol}/models"
 
     # ensemble model: channels are exactly the predictors we train encoders

@@ -193,6 +193,7 @@ def train_kraus(cfg: RunConfig, progress=None, repo_root: Path | None = None) ->
         loss_kind=t.loss_kind,
         length_mixture=t.length_mixture,
         on_epoch=on_epoch,
+        print_every=t.print_every,
     )
 
     train_seconds = time.time() - started
