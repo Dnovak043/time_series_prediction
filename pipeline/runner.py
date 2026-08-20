@@ -87,6 +87,48 @@ def new_run_id(prefix: str = "run") -> str:
 
 
 # ---------------------------------------------------------------------------
+def _write_day_distributions(cfg, root, date, builder, day_df, cls_keys):
+    """His DAILY (validation) outputs for one day -- verbatim from the
+    driver's `if daily_sequence_distributions:` / `if save_daily_class:`
+    blocks. The payloads deliberately differ from the monthly ones:
+
+        SEQ  ->  [sequences, seq_probs]
+                 (his: sequences = flattened all_subsequences,
+                       seq_probs = [i[3] for c in counts for i in c])
+        CLS  ->  [[subsequence, class_probs], ...]
+                 (his: [[i[0], i[2]] for s in cl_distributions[1] for i in s])
+
+    His daily branch is bivariate only, so list (multivariate) predictors are
+    skipped rather than silently written in a format he never produces.
+    """
+    c = cfg.distributions
+    out_dir = root / c.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for predictor in c.predictors:
+        if not isinstance(predictor, str):
+            continue
+        ts, z12 = builder.encode_bivariate(day_df, predictor)
+        if c.sequence_calculation:
+            all_subsequences, counts = builder.sequence_counts(z12)
+            sequences = [s for sub in all_subsequences for s in sub]
+            seq_probs = [i[3] for cc in counts for i in cc]
+            path = out_dir / cfg.seq_distr_name(predictor, date=date)
+            with open(path, "wb") as fh:
+                pickle.dump([sequences, seq_probs], fh)
+            written.append(str(path))
+        if c.class_calculation:
+            for k in cls_keys:
+                cl = builder.class_counts(ts, z12, cls_name=k)
+                cls_distr = [[i[0], i[2]] for sub in cl for i in sub]
+                path = out_dir / cfg.cls_distr_name(predictor, cls_name=k,
+                                                    date=date)
+                with open(path, "wb") as fh:
+                    pickle.dump(cls_distr, fh)
+                written.append(str(path))
+    return written
+
+
 def _write_day_weights(cfg, root, date, builder, day_df):
     """His SQ_PRB_WT_ artifact for one day, verbatim from the driver's
     `if save_seq_prob_weight:` block:
@@ -138,6 +180,12 @@ def _process_day(cfg_dict: dict, date: str, root_str: str,
 
     day_df = cache.get(date)
     cls_keys = list(c.class_names) or [None]   # None = legacy single-class
+    if c.output_mode == "daily":
+        # his validation branch: per-day files, no monthly aggregation
+        _write_day_weights(cfg, root, date, builder, day_df)
+        return {"__daily_files__": _write_day_distributions(
+            cfg, root, date, builder, day_df, cls_keys)}
+
     out: dict[str, dict] = {}
     for predictor in c.predictors:
         r = _encode_and_count(builder, c, day_df, predictor, cls_keys)
@@ -218,9 +266,15 @@ def run(cfg: RunConfig, run_id: str | None = None,
                   "C": {k: [] for k in cls_keys},
                   "all_cls": {k: None for k in cls_keys}} for pk in pkeys}
 
+    daily_files: list[str] = []
+
     def fold(day_result: dict):
         """Aggregate one day's counts — identical math/order to the
-        original incremental loop."""
+        original incremental loop. In daily mode the worker already wrote
+        that day's files, so there is nothing to aggregate."""
+        if "__daily_files__" in day_result:
+            daily_files.extend(day_result["__daily_files__"])
+            return
         for pk in pkeys:
             st = state[pk]
             r = day_result[pk]
@@ -251,6 +305,10 @@ def run(cfg: RunConfig, run_id: str | None = None,
                                 message=f"{date} ({i + 1}/{len(dates)})")
                 day_df = cache.get(date)
                 _write_day_weights(cfg, root, date, builder, day_df)
+                if c.output_mode == "daily":
+                    daily_files += _write_day_distributions(
+                        cfg, root, date, builder, day_df, cls_keys)
+                    continue
                 day_result = {}
                 for predictor in predictors:
                     day_result[predictor_key(predictor)] = _encode_and_count(
@@ -280,6 +338,10 @@ def run(cfg: RunConfig, run_id: str | None = None,
                             stage="distributions",
                             pct=100.0 * next_i / len(dates),
                             message=f"{next_i}/{len(dates)} days aggregated")
+
+        if c.output_mode == "daily":
+            progress.done(f"wrote {len(daily_files)} daily files")
+            return {"daily": sorted(daily_files)}
 
         # ---- persist aggregated outputs, same names/format as the original ----
         out_dir = root / c.output_dir

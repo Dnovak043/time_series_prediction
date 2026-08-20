@@ -188,6 +188,26 @@ class DistributionConfig:
                                           "(SEQ_DISTR_* outputs).")
     class_calculation: bool = _f(True, "Compute class-conditional distributions "
                                        "(CLS_DISTR_* outputs).")
+    output_mode: str = _f("monthly",
+                          "Which of his two driver branches to reproduce. "
+                          "'monthly' = his training branch: aggregate every "
+                          "date in `dates` into one file per predictor, named "
+                          "with the month. 'daily' = his validation branch: "
+                          "one file per (predictor, DAY), named with the full "
+                          "date, and no aggregation. The payloads differ, as "
+                          "they do in his code: monthly SEQ is "
+                          "[distrs, samples] and monthly CLS the 4-field "
+                          "rows, while daily SEQ is [sequences, seq_probs] "
+                          "and daily CLS [[subsequence, class_probs], ...].",
+                          choices=["monthly", "daily"])
+    class_tag_in_name: bool = _f(True,
+                                 "Include the class name in CLS_DISTR_ file "
+                                 "names, as his driver does "
+                                 "(monthly '..._{month}_{cls}', daily "
+                                 "'..._{cls}_{date}'). False drops it, which "
+                                 "is unambiguous only while a single class is "
+                                 "swept -- with several classes the files "
+                                 "would collide.")
     save_seq_prob_weight: bool = _f(False,
                                     "Also emit his per-day SQ_PRB_WT_{sym}_"
                                     "{date} artifact: [sequences, seq_probs, "
@@ -400,7 +420,9 @@ class RunConfig:
     def vol_window(self) -> int:
         return self.featurize.vol_window or 3 * self.featurize.frequency
 
-    def seq_distr_name(self, predictor) -> str:
+    def seq_distr_name(self, predictor, date: str | None = None) -> str:
+        """`date=None` -> his monthly (training) name, tagged with the month
+        of dates[0]. `date="YYYYMMDD"` -> his daily (validation) name."""
         if not isinstance(predictor, str):
             # verbatim from the LearningKraus_multivariate driver: predicted
             # + first + last predictor, dash-joined
@@ -413,14 +435,19 @@ class RunConfig:
         #   seq_prob_file + symbol +'_'+ predicted +'-'+ predictor +'_'+ month
         return ("SQ_PRB_" + self.data.symbol + "_"
                 + self.distributions.predicted + "-" + predictor
-                + "_" + self.data.dates[0][:6])
+                + "_" + (date or self.data.dates[0][:6]))
 
     def seq_prob_weight_name(self, date: str) -> str:
         """His SQ_PRB_WT_ name: one file per (symbol, day) -- no predictor
         tag, because he builds it from the predicted feature alone."""
         return "SQ_PRB_WT_" + self.data.symbol + "_" + date
 
-    def cls_distr_name(self, predictor: str, cls_name: str | None = None) -> str:
+    def cls_distr_name(self, predictor: str, cls_name: str | None = None,
+                       date: str | None = None) -> str:
+        """`date=None` -> his monthly name '..._{month}_{cls}';
+        `date` given -> his daily name '..._{cls}_{date}' (he orders the two
+        fields differently in the two branches). The class tag is omitted
+        when distributions.class_tag_in_name is False."""
         if cls_name is None:   # legacy single-class naming (frozen baseline)
             return ("CLS_DISTR_" + self.data.symbol + "_bivariate_"
                     + self.distributions.predicted + "-" + predictor
@@ -429,9 +456,14 @@ class RunConfig:
         # underscore is gone:
         #   cls_dist_file + symbol +'_'+ predicted +'-'+ predictor
         #                 +'_'+ month +'_'+ clsName
-        return ("CLS_DISTR_" + self.data.symbol + "_"
-                + self.distributions.predicted + "-" + predictor
-                + "_" + self.data.dates[0][:6] + "_" + cls_name)
+        head = ("CLS_DISTR_" + self.data.symbol + "_"
+                + self.distributions.predicted + "-" + predictor)
+        tag = cls_name if self.distributions.class_tag_in_name else None
+        if date is None:                      # monthly: ..._{month}[_{cls}]
+            out = head + "_" + self.data.dates[0][:6]
+            return out + "_" + tag if tag else out
+        # daily: ..._[{cls}_]{date}
+        return head + "_" + (tag + "_" if tag else "") + date
 
     # -- (de)serialization ----------------------------------------------------
     def to_dict(self) -> dict:
