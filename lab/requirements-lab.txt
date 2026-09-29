@@ -1,0 +1,4 @@
+# Optional extras for lab/ (the core lab needs only requirements.txt).
+#     pip install -r lab/requirements-lab.txt
+tigramite      # reference PCMCI / PCMCI+ with nonlinear CI tests (causal.tigramite_pcmci)
+lingam         # VAR-LiNGAM / DirectLiNGAM (causal.var_lingam)
